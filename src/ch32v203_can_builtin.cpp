@@ -307,195 +307,93 @@ void CH32CAN::setTXBufferSize(int newSize)
     txBufferSize = newSize;
 }
 
+void CH32CAN::watchForList(uint8_t mailbox, uint32_t id1, uint32_t id2) {
+    CAN_FilterInitTypeDef filter {
+        .CAN_FilterIdHigh = (uint16_t) (id1 >> 16),
+        .CAN_FilterIdLow  = (uint16_t) (id1 & 0x0000FFFF),
+        .CAN_FilterMaskIdHigh = (uint16_t) (id2 >> 16),
+        .CAN_FilterMaskIdLow  = (uint16_t) (id2 & 0x0000FFFF),
+        .CAN_FilterFIFOAssignment = ((mailbox & 1) ? CAN_Filter_FIFO1 : CAN_Filter_FIFO0), // Split between mailboxes to get more FIFO size
+        .CAN_FilterNumber = mailbox,
+        .CAN_FilterMode = CAN_FilterMode_IdList,
+        .CAN_FilterScale = CAN_FilterScale_32bit,
+        .CAN_FilterActivation = ENABLE,
+    };
+    CAN_FilterInit(&filter);
+    filterIsConfigured[mailbox] = true;
+}
+
+void CH32CAN::watchForList(uint8_t mailbox, uint16_t id1, uint16_t id2, uint16_t id3, uint16_t id4) {
+    CAN_FilterInitTypeDef filter {
+        .CAN_FilterIdHigh = id2,
+        .CAN_FilterIdLow  = id1,
+        .CAN_FilterMaskIdHigh = id4,
+        .CAN_FilterMaskIdLow  = id3,
+        .CAN_FilterFIFOAssignment = ((mailbox & 1) ? CAN_Filter_FIFO1 : CAN_Filter_FIFO0), // Split between mailboxes to get more FIFO size
+        .CAN_FilterNumber = mailbox,
+        .CAN_FilterMode = CAN_FilterMode_IdList,
+        .CAN_FilterScale = CAN_FilterScale_16bit,
+        .CAN_FilterActivation = ENABLE,
+    };
+    CAN_FilterInit(&filter);
+    filterIsConfigured[mailbox] = true;
+}
+
+void CH32CAN::watchForMask(uint8_t mailbox, uint32_t id, uint32_t mask) {
+    CAN_FilterInitTypeDef filter {
+        .CAN_FilterIdHigh = (uint16_t) (id >> 16),
+        .CAN_FilterIdLow  = (uint16_t) (id & 0x0000FFFF),
+        .CAN_FilterMaskIdHigh = (uint16_t) (mask >> 16),
+        .CAN_FilterMaskIdLow  = (uint16_t) (mask & 0x0000FFFF),
+        .CAN_FilterFIFOAssignment = ((mailbox & 1) ? CAN_Filter_FIFO1 : CAN_Filter_FIFO0), // Split between mailboxes to get more FIFO size
+        .CAN_FilterNumber = mailbox,
+        .CAN_FilterMode = CAN_FilterMode_IdMask,
+        .CAN_FilterScale = CAN_FilterScale_32bit,
+        .CAN_FilterActivation = ENABLE,
+    };
+    CAN_FilterInit(&filter);
+    filterIsConfigured[mailbox] = true;
+}
+
+void CH32CAN::watchForMask(uint8_t mailbox, uint16_t id1, uint16_t mask1, uint16_t id2, uint16_t mask2) {
+    CAN_FilterInitTypeDef filter {
+        .CAN_FilterIdHigh = id2,
+        .CAN_FilterIdLow  = id1,
+        .CAN_FilterMaskIdHigh = mask2,
+        .CAN_FilterMaskIdLow  = mask1,
+        .CAN_FilterFIFOAssignment = ((mailbox & 1) ? CAN_Filter_FIFO1 : CAN_Filter_FIFO0), // Split between mailboxes to get more FIFO size
+        .CAN_FilterNumber = mailbox,
+        .CAN_FilterMode = CAN_FilterMode_IdMask,
+        .CAN_FilterScale = CAN_FilterScale_16bit,
+        .CAN_FilterActivation = ENABLE,
+    };
+    CAN_FilterInit(&filter);
+    filterIsConfigured[mailbox] = true;
+}
+
 int CH32CAN::_setFilterSpecific(uint8_t mailbox, uint32_t id, uint32_t mask, bool extended)
 {
     if (mailbox >= BI_NUM_FILTERS) {
         return -1;
     }
 
-    bool isListFilter = (extended && mask >= 0x1FFFFFFF) || (!extended && mask >= 0x7FF);
-
-    // Detect possible configurations
-    bool noFiltersAreMaskTypeInSlot = filterIsListMode[mailbox ^ 1] || !filterIsConfigured[mailbox ^ 1] || 
-                                      filterIsListMode[mailbox ^ 2] || !filterIsConfigured[mailbox ^ 2] ||
-                                      filterIsListMode[mailbox ^ 3] || !filterIsConfigured[mailbox ^ 3];
-    bool noFiltersAre32BitTypeInSlot = filterIs16bit[mailbox ^ 1] || !filterIsConfigured[mailbox ^ 1] || 
-                                       filterIs16bit[mailbox ^ 2] || !filterIsConfigured[mailbox ^ 2] ||
-                                       filterIs16bit[mailbox ^ 3] || !filterIsConfigured[mailbox ^ 3];
-
-    CAN_FilterInitTypeDef filter {
-        .CAN_FilterIdHigh = (uint16_t) ((CAN1->sFilterRegister[mailbox >> 2].FR1) >> 16),
-        .CAN_FilterIdLow  = (uint16_t) ((CAN1->sFilterRegister[mailbox >> 2].FR1) & 0x0000FFFF),
-        .CAN_FilterMaskIdHigh = (uint16_t) ((CAN1->sFilterRegister[mailbox >> 2].FR2) >> 16),
-        .CAN_FilterMaskIdLow  = (uint16_t) ((CAN1->sFilterRegister[mailbox >> 2].FR2) & 0x0000FFFF),
-        .CAN_FilterFIFOAssignment = ((mailbox & 4) ? CAN_Filter_FIFO1 : CAN_Filter_FIFO0), // Split between mailboxes to get more FIFO size
-        .CAN_FilterNumber = (uint8_t) (mailbox >> 2),
-        .CAN_FilterMode = CAN_FilterMode_IdList,
-        .CAN_FilterScale = CAN_FilterScale_16bit,
-        .CAN_FilterActivation = ENABLE,
-    };
-    
-    if (noFiltersAreMaskTypeInSlot && isListFilter) {
-        // List mode
-        if (!extended && noFiltersAre32BitTypeInSlot) {
-            // Adjacent filters are 16 bit or free, and we need to put a 16 bit filter in list mode
-
-            switch (mailbox & 3) {
-            case 0:
-                filter.CAN_FilterIdLow = id;
-                break;
-            case 1:
-                filter.CAN_FilterIdHigh = id;
-                break;
-            case 2:
-                filter.CAN_FilterMaskIdLow = id;
-                break;
-            case 3:
-                filter.CAN_FilterMaskIdHigh = id;
-            }
-            filter.CAN_FilterScale = CAN_FilterScale_16bit;
-            filter.CAN_FilterMode = CAN_FilterMode_IdList;
-
-            filterIsConfigured[mailbox] = true;
-            filterIsListMode[mailbox] = true;
-            filterIs16bit[mailbox] = true;
-
-            CAN_FilterInit(&filter);
-            return mailbox;
-        } else if (!filterIs16bit[mailbox ^ 1] && !filterIs16bit[mailbox ^ 2] && !filterIs16bit[mailbox ^ 3]) {
-            // We need to put a 32 bit filter in list mode. Even if it is 16 bit
-
-            if (filterIsConfigured[mailbox ^ 1] && !filterIsConfigured[mailbox]) {
-                // We are overwriting something we shouldn't
-                return -1;
-            }
-            
-            if (mailbox & 2) {
-                filter.CAN_FilterIdLow = id & 0x0000FFFF;
-                filter.CAN_FilterIdHigh = id >> 16;
-            } else {
-                filter.CAN_FilterMaskIdLow = id & 0x0000FFFF;
-                filter.CAN_FilterMaskIdHigh = id >> 16;
-            }
-            filter.CAN_FilterScale = CAN_FilterScale_32bit;
-            filter.CAN_FilterMode = CAN_FilterMode_IdList;
-            
-            filterIsConfigured[mailbox] = true;
-            filterIsConfigured[mailbox ^ 1] = true;
-            filterIsListMode[mailbox] = true;
-            filterIsListMode[mailbox^1] = true;
-            filterIs16bit[mailbox] = false;
-            filterIs16bit[mailbox ^ 1] = false;
-
-            CAN_FilterInit(&filter);
-            return mailbox;
-        }
-    } else if (!filterIsListMode[mailbox ^ 1] && !filterIsListMode[mailbox ^ 2] && !filterIsListMode[mailbox ^ 3]) {
-        // Mask mode. Add current one as if it is in mask mode (full mask)
-        if (!extended && noFiltersAre32BitTypeInSlot) {
-            // Adjacent filters are 16 bit or free, and we need to put a 16 bit filter in mask mode
-            
-            if ((filterIsConfigured[mailbox ^ 2] || filterIsConfigured[mailbox ^ 1]) && !filterIsConfigured[mailbox]) {
-                // We are overwriting something we shouldn't
-                return -1;
-            }
-            
-            if (mailbox & 2) {
-                filter.CAN_FilterIdLow = id;
-                filter.CAN_FilterMaskIdLow = mask;
-            } else {
-                filter.CAN_FilterIdHigh = id;
-                filter.CAN_FilterMaskIdHigh = mask;
-            }
-
-            filter.CAN_FilterScale = CAN_FilterScale_16bit;
-            filter.CAN_FilterMode = CAN_FilterMode_IdMask;
-            
-            filterIsConfigured[mailbox] = true;
-            filterIsConfigured[mailbox ^ 1] = true;
-            filterIsListMode[mailbox] = false;
-            filterIsListMode[mailbox^1] = false;
-            filterIs16bit[mailbox] = false;
-            filterIs16bit[mailbox ^ 1] = false;
-
-            CAN_FilterInit(&filter);
-            return mailbox;
-        } else if (!filterIs16bit[mailbox ^ 1] && !filterIs16bit[mailbox ^ 2] && !filterIs16bit[mailbox ^ 3]) {
-            // The whole slot is ours, so just fill it
-            
-            if ((filterIsConfigured[mailbox ^ 3] || filterIsConfigured[mailbox ^ 2] || filterIsConfigured[mailbox ^ 1]) && !filterIsConfigured[mailbox]) {
-                // We are overwriting something we shouldn't
-                return -1;
-            }
-            
-            filter.CAN_FilterIdLow = id & 0x0000FFFF;
-            filter.CAN_FilterIdHigh = id >> 16;
-            filter.CAN_FilterMaskIdLow = mask & 0x0000FFFF;
-            filter.CAN_FilterMaskIdHigh = mask >> 16;
-
-            filterIsConfigured[mailbox] = true;
-            filterIsConfigured[mailbox ^ 1] = true;
-            filterIsConfigured[mailbox ^ 2] = true;
-            filterIsConfigured[mailbox ^ 3] = true;
-            filterIsListMode[mailbox] = isListFilter;
-            filterIsListMode[mailbox^1] = isListFilter;
-            filterIsListMode[mailbox^2] = isListFilter;
-            filterIsListMode[mailbox^3] = isListFilter;
-            filterIs16bit[mailbox] = false;
-            filterIs16bit[mailbox ^ 1] = false;
-            filterIs16bit[mailbox ^ 2] = false;
-            filterIs16bit[mailbox ^ 3] = false;
-
-            CAN_FilterInit(&filter);
-            return mailbox;
-        }
-    } else if (!isListFilter && !extended && filterIsListMode[mailbox ^ 2] && filterIs16bit[mailbox ^ 2] &&
-               !filterIsConfigured[mailbox ^ 1] && !filterIsConfigured[mailbox ^ 3]) {
-        // Special case where we can promote one remaining filter to mask
-        if (mailbox & 2) {
-            filter.CAN_FilterIdLow = id;
-            filter.CAN_FilterMaskIdLow = mask;
-            filter.CAN_FilterMaskIdHigh = 0x7FF;
-        } else {
-            filter.CAN_FilterIdHigh = id;
-            filter.CAN_FilterMaskIdHigh = mask;
-            filter.CAN_FilterMaskIdLow = 0x7FF;
-        }
-
-        filter.CAN_FilterScale = CAN_FilterScale_16bit;
-        filter.CAN_FilterMode = CAN_FilterMode_IdMask;
-        
-        filterIsConfigured[mailbox] = true;
-        filterIsConfigured[mailbox ^ 1] = true;
-        filterIsConfigured[mailbox ^ 3] = true;
-        filterIsListMode[mailbox] = false;
-        filterIsListMode[mailbox^1] = false;
-        filterIsListMode[mailbox^3] = false;
-        filterIs16bit[mailbox] = true;
-        filterIs16bit[mailbox ^ 1] = true;
-        filterIs16bit[mailbox ^ 3] = true;
-        
-        CAN_FilterInit(&filter);
-        return mailbox;
-    }
-
-    // Not a supported variant
-    return -1;
+    watchForMask(mailbox, id, mask);
+    return mailbox;
 }
 
 int CH32CAN::_setFilter(uint32_t id, uint32_t mask, bool extended)
 {
     int i;
-    for (i = BI_NUM_FILTERS - 1; i >= 0 && !filterIsConfigured[i]; --i);
-    while (++i < BI_NUM_FILTERS && _setFilterSpecific(i, id, mask, extended) < 0);
-
-    if (i == BI_NUM_FILTERS) {
-        if (debuggingMode) Serial.println("Could not set filter!");
-
-        return -1;
+    for (i = 0; i < BI_NUM_FILTERS; ++i) {
+        if (!filterIsConfigured[i]) {
+            if (_setFilterSpecific(i, id, mask, extended) >= 0)
+                return i;
+        }
     }
+    
+    if (debuggingMode) Serial.println("Could not set filter!");
 
-    return i;
+    return -1;
 }
 
 uint32_t CH32CAN::init(uint32_t ul_baudrate)

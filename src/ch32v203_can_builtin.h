@@ -38,7 +38,7 @@
 #include "queue.h"
 
 //#define DEBUG_SETUP
-#define BI_NUM_FILTERS 112
+#define BI_NUM_FILTERS 28
 
 #define BI_RX_BUFFER_SIZE	3
 #define BI_TX_BUFFER_SIZE  3
@@ -77,6 +77,11 @@ public:
   void setTXBufferSize(int newSize);
   uint16_t available(); //like rx_avail but returns the number of waiting frames
   uint32_t get_rx_buff(CAN_FRAME &msg);
+  
+  void watchForList(uint8_t mailbox, uint32_t id1, uint32_t id2);
+  void watchForList(uint8_t mailbox, uint16_t id1, uint16_t id2, uint16_t id3, uint16_t id4);
+  void watchForMask(uint8_t mailbox, uint32_t id, uint32_t mask);
+  void watchForMask(uint8_t mailbox, uint16_t id1, uint16_t mask1, uint16_t id2, uint16_t mask2);
 
   friend void CAN_Rx_handler(void *pvParameters);
   friend void CAN_Tx_handler(void *pvParameters);
@@ -87,8 +92,6 @@ protected:
 
 private:
   bool filterIsConfigured[BI_NUM_FILTERS];
-  bool filterIs16bit[BI_NUM_FILTERS];
-  bool filterIsListMode[BI_NUM_FILTERS];
   int rxBufferSize;
   int txBufferSize;
   bool listenOnlyMode;
