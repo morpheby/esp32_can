@@ -28,50 +28,41 @@
   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
 
-#ifndef __ESP32_CAN__
-#define __ESP32_CAN__
+#ifndef __CH32_CAN__
+#define __CH32_CAN__
 
 #include "Arduino.h"
 #include <can_common.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/queue.h"
-#include "driver/gpio.h"
-#include "driver/adc.h"
-#include "esp_system.h"
-#include "esp_adc_cal.h"
-#include "driver/twai.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include "queue.h"
 
 //#define DEBUG_SETUP
-#define BI_NUM_FILTERS 32
+#define BI_NUM_FILTERS 112
 
-#define BI_RX_BUFFER_SIZE	64
-#define BI_TX_BUFFER_SIZE  16
+#define BI_RX_BUFFER_SIZE	3
+#define BI_TX_BUFFER_SIZE  3
+#define CAN_RX_QUEUE_BUFFER_SIZE  64
+#define CAN_MAX_RETRANSMIT_COUNT 128
 
-typedef struct
-{
-  uint32_t mask;
-  uint32_t id;
-  bool extended;
-  bool configured;
-} ESP32_FILTER;
+typedef struct {
+    uint16_t brp : 10;
+    uint8_t tseg_1 : 4,
+            tseg_2 : 3,
+            sjw    : 2;
+    // Note: bit length are here for compile-time verification
+} CANTimingConfig_t;
 
-typedef struct
-{
-    twai_timing_config_t cfg;
-    uint32_t speed;
-} VALID_TIMING;
+class CH32CAN;
 
-class ESP32CAN : public CAN_COMMON
+class CH32CAN : public CAN_COMMON
 {
 public:
-  ESP32CAN(gpio_num_t rxPin, gpio_num_t txPin);
-  ESP32CAN();
+  CH32CAN();
 
   //block of functions which must be overriden from CAN_COMMON to implement functionality for this hardware
   int _setFilterSpecific(uint8_t mailbox, uint32_t id, uint32_t mask, bool extended);
   int _setFilter(uint32_t id, uint32_t mask, bool extended);
-  void _init();
   uint32_t init(uint32_t ul_baudrate);
   uint32_t beginAutoSpeed();
   uint32_t set_baudrate(uint32_t ul_baudrate);
@@ -81,26 +72,26 @@ public:
   void disable();
   bool sendFrame(CAN_FRAME& txFrame);
   bool rx_avail();
-  void setTXBufferSize(int newSize);
   void setRXBufferSize(int newSize);
   uint16_t available(); //like rx_avail but returns the number of waiting frames
   uint32_t get_rx_buff(CAN_FRAME &msg);
-  bool processFrame(twai_message_t &frame);
-  void sendCallback(CAN_FRAME *frame);
 
-  void setCANPins(gpio_num_t rxPin, gpio_num_t txPin);
-
-  friend void CAN_WatchDog_Builtin( void *pvParameters );
-  friend void task_LowLevelRX(void *pvParameters);
+  friend void CAN_Rx_handler(void *pvParameters);
+  friend void CAN_Tx_handler(void *pvParameters);
 
 protected:
   bool readyForTraffic;
   int cyclesSinceTraffic;
 
 private:
-  // Pin variables
-  ESP32_FILTER filters[BI_NUM_FILTERS];
+  bool filterIsConfigured[BI_NUM_FILTERS];
+  bool filterIs16bit[BI_NUM_FILTERS];
+  bool filterIsListMode[BI_NUM_FILTERS];
   int rxBufferSize;
+  bool listenOnlyMode;
+  CANTimingConfig_t currentTimingConfig;
+  
+  bool processFrame(CAN_FRAME &frame, uint8_t filter_id);
 };
 
 extern QueueHandle_t callbackQueue;
