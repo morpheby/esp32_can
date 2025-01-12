@@ -663,8 +663,7 @@ bool CH32CAN::processFrame(CAN_FRAME &frame, uint8_t filter_id)
                 }
                 else if (thisListener->isCallbackActive(numFilters)) //global catch-all 
                 {
-                    frame.fid = 0x80000000ul + (listenerPos << 24ul) + 0xFF;
-                    xQueueSend(callbackQueue, &frame, 0);
+                    thisListener->gotFrame(&frame, 0xFF);
                     return true;
                 }
             }
