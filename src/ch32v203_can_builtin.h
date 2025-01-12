@@ -42,7 +42,8 @@
 
 #define BI_RX_BUFFER_SIZE	3
 #define BI_TX_BUFFER_SIZE  3
-#define CAN_RX_QUEUE_BUFFER_SIZE  64
+#define CAN_RX_QUEUE_BUFFER_SIZE  32
+#define CAN_TX_QUEUE_BUFFER_SIZE  32
 #define CAN_MAX_RETRANSMIT_COUNT 128
 
 typedef struct {
@@ -73,6 +74,7 @@ public:
   bool sendFrame(CAN_FRAME& txFrame);
   bool rx_avail();
   void setRXBufferSize(int newSize);
+  void setTXBufferSize(int newSize);
   uint16_t available(); //like rx_avail but returns the number of waiting frames
   uint32_t get_rx_buff(CAN_FRAME &msg);
 
@@ -88,6 +90,7 @@ private:
   bool filterIs16bit[BI_NUM_FILTERS];
   bool filterIsListMode[BI_NUM_FILTERS];
   int rxBufferSize;
+  int txBufferSize;
   bool listenOnlyMode;
   CANTimingConfig_t currentTimingConfig;
   

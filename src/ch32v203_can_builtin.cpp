@@ -56,8 +56,8 @@ static bool canNeedsBusReset = false;
 static TaskHandle_t CAN_Rx_handler_task = NULL;
 static TaskHandle_t CAN_Tx_handler_task = NULL;
 
-static CanTxMsg mailboxMessages[3];
-static uint16_t mailboxRetransmitCounter[3] = {0, 0, 0};
+// static CanTxMsg mailboxMessages[3];
+// static uint16_t mailboxRetransmitCounter[3] = {0, 0, 0};
 
 //because of the way the TWAI library works, it's just easier to store the valid timings here and anything not found here
 //is just plain not supported. If you need a different speed then add it here. Be sure to leave the zero record at the end
@@ -89,6 +89,8 @@ static void frameToMsg(CanTxMsg *msg, const CAN_FRAME *frame) {
 #if !(USE_TINYUSB)
 
 // CAN doesn't work with USB, unless you have remap available. CH32V203K8T6 doesn't, so can't really test this.
+
+extern "C" {
 
 __attribute__((interrupt)) void
 USB_LP_CAN1_RX0_IRQHandler(void) {
@@ -152,42 +154,51 @@ __attribute__((interrupt)) void
 USB_HP_CAN1_TX_IRQHandler(void) {
     // CAN TX
     // Find an empty mailbox or a mailbox with a failure
-    CanTxMsg mailboxMessages_new[3];
-    uint16_t mailboxRetransmitCounter_new[3] = {0, 0, 0};
+    // CanTxMsg mailboxMessages_new[3];
+    // uint16_t mailboxRetransmitCounter_new[3] = {0, 0, 0};
+    CanTxMsg mailboxMessage;
 
     CAN_FRAME frame;
 
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0, j = 0; i < 3; ++i) {
         switch (CAN_TransmitStatus(CAN1, i)) {
         case CAN_TxStatus_Pending:
             // This one is full, ignore it
-            mailboxMessages_new[i] = mailboxMessages[i];
-            mailboxRetransmitCounter_new[i] = mailboxRetransmitCounter[i];
-            continue;
+            // mailboxMessages_new[j] = mailboxMessages[i];
+            // mailboxRetransmitCounter_new[j] = mailboxRetransmitCounter[i];
+            break;
             
         case CAN_TxStatus_Failed:
-            // This queue has an error. Check what error it is and either discard or retransmit
-            if(++mailboxRetransmitCounter[i] <= CAN_MAX_RETRANSMIT_COUNT) {
-                uint8_t mb = CAN_TxStatus_NoMailBox;
-                do {
-                    mb = CAN_Transmit(CAN1, mailboxMessages + i);
-                } while (mb == CAN_TxStatus_NoMailBox);
-                mailboxMessages_new[mb] = mailboxMessages[i];
-                mailboxRetransmitCounter_new[mb] = mailboxRetransmitCounter[i];
-                continue;
-            }
+        //     // This queue has an error. Check what error it is and either discard or retransmit
+        //     if(mailboxRetransmitCounter[i] < CAN_MAX_RETRANSMIT_COUNT) {
+        //         uint8_t mb = CAN_TxStatus_NoMailBox;
+        //         do {
+        //             mb = CAN_Transmit(CAN1, mailboxMessages + i);
+        //         } while (mb == CAN_TxStatus_NoMailBox);
+        //         mailboxMessages_new[mb] = mailboxMessages[i];
+        //         mailboxRetransmitCounter_new[mb] = mailboxRetransmitCounter[i];
+        //         Serial.printf("Retransmit: %u\n", mailboxRetransmitCounter_new[mb]);
+        //         if (mb < i) {
+        //             i = mb;
+        //         }
+        //         break;
+        //     }
+            Serial.println("Drop CAN message");
             // fallthrough
         case CAN_TxStatus_Ok:
             // This one has finished, get a new message from the queue and send it
             if (xQueueReceiveFromISR(tx_queue, &frame, &xHigherPriorityTaskWoken) == pdTRUE) {
-                frameToMsg(mailboxMessages + i, &frame);
+                frameToMsg(&mailboxMessage, &frame);
                 uint8_t mb = CAN_TxStatus_NoMailBox;
                 do {
-                    mb = CAN_Transmit(CAN1, mailboxMessages + i);
+                    mb = CAN_Transmit(CAN1, &mailboxMessage);
                 } while (mb == CAN_TxStatus_NoMailBox);
-                mailboxMessages_new[mb] = mailboxMessages[i];
+                // mailboxMessages_new[mb] = mailboxMessages[i];
+                // if (mb < i) {
+                //     i = mb;
+                // }
             } else {
                 vTaskNotifyGiveFromISR(CAN_Tx_handler_task, &xHigherPriorityTaskWoken);
             }
@@ -197,8 +208,8 @@ USB_HP_CAN1_TX_IRQHandler(void) {
             break;
         }
     }
-    memcpy(mailboxMessages, mailboxMessages_new, 3 * sizeof(CanTxMsg));
-    memcpy(mailboxRetransmitCounter, mailboxRetransmitCounter_new, 3 * sizeof(uint16_t));
+    // memcpy(mailboxMessages, mailboxMessages_new, 3 * sizeof(CanTxMsg));
+    // memcpy(mailboxRetransmitCounter, mailboxRetransmitCounter_new, 3 * sizeof(uint16_t));
     
     CAN_ClearFlag(CAN1, CAN_FLAG_RQCP0 | CAN_FLAG_RQCP1 | CAN_FLAG_RQCP2);
     CAN_ClearITPendingBit(CAN1,  CAN_IT_TME);
@@ -211,16 +222,23 @@ CAN1_SCE_IRQHandler(void) {
         canNeedsBusReset = true;
     }
 
-    CAN_ClearFlag(CAN1, CAN_FLAG_EWG | CAN_FLAG_EPV | CAN_FLAG_BOF | CAN_FLAG_LEC);
     CAN_ClearITPendingBit(CAN1,  CAN_IT_EWG | CAN_IT_EPV | CAN_IT_BOF | CAN_IT_LEC | CAN_IT_ERR);
 }
+
+}
+
 #endif
 
 CH32CAN::CH32CAN() : CAN_COMMON(BI_NUM_FILTERS) 
 {
     rxBufferSize = CAN_RX_QUEUE_BUFFER_SIZE;
+    txBufferSize = CAN_TX_QUEUE_BUFFER_SIZE;
 
     readyForTraffic = false;
+
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_AFIO | RCC_APB2Periph_GPIOA, ENABLE);
+    RCC_APB1PeriphClockCmd(RCC_APB1Periph_CAN1, ENABLE);
+
     cyclesSinceTraffic = 0;
 }
 
@@ -243,12 +261,9 @@ void CAN_Rx_handler(void *pvParameters)
             } else if (canNeedsBusReset) {
                 espCan->cyclesSinceTraffic = 0;
                 espCan->readyForTraffic = false;
+                printf("CAN bus reset");
                 // Reinitialize bus
-                // TODO:
-                // if (twai_initiate_recovery() != ESP_OK)
-                {
-                    printf("Could not initiate bus recovery!\n");
-                }
+                CAN_ClearFlag(CAN1, CAN_FLAG_EWG | CAN_FLAG_EPV | CAN_FLAG_BOF | CAN_FLAG_LEC);
             }
             continue;
         }
@@ -261,9 +276,9 @@ void CAN_Tx_handler(void *pvParameters)
     CAN_FRAME frame;
     
     for(;;)
-    {   
-        if ((CAN1->TSTATR & (CAN_TSTATR_TME0 | CAN_TSTATR_TME1 | CAN_TSTATR_TME2)) == (CAN_TSTATR_TME0 | CAN_TSTATR_TME1 | CAN_TSTATR_TME2)) {    
-            if (xQueueReceive(rx_queue, &frame, 0) != pdTRUE) {
+    {
+        if ((CAN1->TSTATR & (CAN_TSTATR_TME0 | CAN_TSTATR_TME1 | CAN_TSTATR_TME2)) == (CAN_TSTATR_TME0 | CAN_TSTATR_TME1 | CAN_TSTATR_TME2)) {
+            if (xQueueReceive(tx_queue, &frame, portMAX_DELAY) != pdTRUE) {
                 continue;
             }
 
@@ -273,13 +288,12 @@ void CAN_Tx_handler(void *pvParameters)
 
             // We are 100% certain this is going to be the first mailbox,
             // and to prevent races we want to set it before queue has started
-            mailboxMessages[0] = mailboxMessage;
-            mailboxRetransmitCounter[0] = 0;
+            // mailboxMessages[0] = mailboxMessage;
+            // mailboxRetransmitCounter[0] = 0;
             CAN_Transmit(CAN1, &mailboxMessage);
         } else {
             ulTaskNotifyTake(1, pdMS_TO_TICKS(100));
         }
-        
     }
 }
 
@@ -288,15 +302,20 @@ void CH32CAN::setRXBufferSize(int newSize)
     rxBufferSize = newSize;
 }
 
+void CH32CAN::setTXBufferSize(int newSize)
+{
+    txBufferSize = newSize;
+}
+
 int CH32CAN::_setFilterSpecific(uint8_t mailbox, uint32_t id, uint32_t mask, bool extended)
 {
-    if (mailbox >= BI_NUM_FILTERS)
+    if (mailbox >= BI_NUM_FILTERS) {
         return -1;
+    }
 
     bool isListFilter = (extended && mask >= 0x1FFFFFFF) || (!extended && mask >= 0x7FF);
 
     // Detect possible configurations
-    // int numberOfFiltersConfiguredInSlot = (int) filterIsConfigured[mailbox ^ 1] + filterIsConfigured[mailbox ^ 2] + filterIsConfigured[mailbox ^ 3];
     bool noFiltersAreMaskTypeInSlot = filterIsListMode[mailbox ^ 1] || !filterIsConfigured[mailbox ^ 1] || 
                                       filterIsListMode[mailbox ^ 2] || !filterIsConfigured[mailbox ^ 2] ||
                                       filterIsListMode[mailbox ^ 3] || !filterIsConfigured[mailbox ^ 3];
@@ -315,7 +334,7 @@ int CH32CAN::_setFilterSpecific(uint8_t mailbox, uint32_t id, uint32_t mask, boo
         .CAN_FilterScale = CAN_FilterScale_16bit,
         .CAN_FilterActivation = ENABLE,
     };
-
+    
     if (noFiltersAreMaskTypeInSlot && isListFilter) {
         // List mode
         if (!extended && noFiltersAre32BitTypeInSlot) {
@@ -482,11 +501,6 @@ int CH32CAN::_setFilter(uint32_t id, uint32_t mask, bool extended)
 uint32_t CH32CAN::init(uint32_t ul_baudrate)
 {
     GPIO_InitTypeDef      GPIO_InitStructure = {0};
-    // CAN_InitTypeDef       CAN_InitStructure = {0};
-    // CAN_FilterInitTypeDef CAN_FilterInitStructure = {0};
-
-    RCC_APB2PeriphClockCmd(RCC_APB2Periph_AFIO | RCC_APB2Periph_GPIOA, ENABLE);
-    RCC_APB1PeriphClockCmd(RCC_APB1Periph_CAN1, ENABLE);
 
     GPIO_InitStructure.GPIO_Pin = GPIO_Pin_12;
     GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_OD;
@@ -500,8 +514,6 @@ uint32_t CH32CAN::init(uint32_t ul_baudrate)
     // Enable 5V pull-up (required for 5V CAN Transceivers that have no internal pull-up)
     // EXTEN->EXTEN_CTR = (EXTEN->EXTEN_CTR & (~EXTEN_USBD_LS) | EXTEN_USBD_PU_EN);
     
-    RCC_APB1PeriphClockCmd(RCC_APB1Periph_CAN1, ENABLE);
-
     set_baudrate(ul_baudrate);
     
     CAN_ITConfig(CAN1, CAN_IT_BOF | CAN_IT_FMP0 | CAN_IT_FMP1 | CAN_IT_FF0 | CAN_IT_FF1 | CAN_IT_TME, ENABLE);
@@ -509,6 +521,11 @@ uint32_t CH32CAN::init(uint32_t ul_baudrate)
     {
         CAN_ITConfig(CAN1, CAN_IT_EPV | CAN_IT_LEC | CAN_IT_ERR | CAN_IT_FOV0 | CAN_IT_FOV1, ENABLE);
     }
+
+    NVIC_EnableIRQ(USB_HP_CAN1_TX_IRQn);
+    NVIC_EnableIRQ(USB_LP_CAN1_RX0_IRQn);
+    NVIC_EnableIRQ(CAN1_RX1_IRQn);
+    NVIC_EnableIRQ(CAN1_SCE_IRQn);
     
     readyForTraffic = true;
     return ul_baudrate;
@@ -553,6 +570,7 @@ uint32_t CH32CAN::beginAutoSpeed()
 uint32_t CH32CAN::set_baudrate(uint32_t ul_baudrate)
 {
     disable();
+
     //now try to find a valid timing to use
     int idx = 0;
     while (valid_timings[idx].speed != 0)
@@ -585,7 +603,6 @@ void CH32CAN::setNoACKMode(bool state)
 
 void CH32CAN::enable()
 {
-    
     CAN_InitTypeDef CAN_InitStructure = {
         .CAN_Prescaler = currentTimingConfig.brp,
         .CAN_Mode = CAN_OperatingMode_Normal,
@@ -595,7 +612,8 @@ void CH32CAN::enable()
         .CAN_TTCM = DISABLE,    // Don't use TTCAN
         .CAN_ABOM = DISABLE,    // Manually reset bus after error
         .CAN_AWUM = DISABLE,    // Manually wake-up from sleep
-        .CAN_NART = ENABLE,     // Don't resend messages automatically
+        // .CAN_NART = ENABLE,     // Don't resend messages automatically
+        .CAN_NART = DISABLE,     // Resend messages automatically
         .CAN_RFLM = ENABLE,     // When the receiving FIFO overflows, don't receive new messages
         .CAN_TXFP = DISABLE,    // Send priority is determined by the message identifier
     };
@@ -606,11 +624,11 @@ void CH32CAN::enable()
     }
 
     rx_queue = xQueueCreate(rxBufferSize, sizeof(CAN_FRAME));
-    tx_queue = xQueueCreate(rxBufferSize, sizeof(CAN_FRAME));
+    tx_queue = xQueueCreate(txBufferSize, sizeof(CAN_FRAME));
 
     xTaskCreate(CAN_Tx_handler, "CAN_TX", 256, this, configMAX_PRIORITIES - 1, &CAN_Tx_handler_task);
     xTaskCreate(CAN_Rx_handler, "CAN_RX", 512, this, configMAX_PRIORITIES - 1, &CAN_Rx_handler_task);
-
+    
     readyForTraffic = true;
 }
 
@@ -695,7 +713,7 @@ uint32_t CH32CAN::get_rx_buff(CAN_FRAME &msg)
 {
     CAN_FRAME frame;
     //receive next CAN frame from queue
-    if(xQueueReceive(rx_queue,&frame, 0) == pdTRUE)
+    if(xQueueReceive(rx_queue,&frame, portMAX_DELAY) == pdTRUE)
     {
         msg = frame; //do a copy in the case that the receive worked
         return true;
