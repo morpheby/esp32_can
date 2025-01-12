@@ -116,6 +116,7 @@ USB_LP_CAN1_RX0_IRQHandler(void) {
     }
 
     CAN_ClearFlag(CAN1, CAN_FLAG_FMP0 | CAN_FLAG_FF0 | CAN_FLAG_FOV0);
+    CAN_ClearITPendingBit(CAN1,  CAN_IT_FMP0 | CAN_IT_FF0 | CAN_IT_FOV0);
 }
 
 __attribute__((interrupt)) void
@@ -144,6 +145,7 @@ CAN1_RX1_IRQHandler(void) {
     }
 
     CAN_ClearFlag(CAN1, CAN_FLAG_FMP1 | CAN_FLAG_FF1 | CAN_FLAG_FOV1);
+    CAN_ClearITPendingBit(CAN1,  CAN_IT_FMP1 | CAN_IT_FF1 | CAN_IT_FOV1);
 }
 
 __attribute__((interrupt)) void
@@ -199,6 +201,7 @@ USB_HP_CAN1_TX_IRQHandler(void) {
     memcpy(mailboxRetransmitCounter, mailboxRetransmitCounter_new, 3 * sizeof(uint16_t));
     
     CAN_ClearFlag(CAN1, CAN_FLAG_RQCP0 | CAN_FLAG_RQCP1 | CAN_FLAG_RQCP2);
+    CAN_ClearITPendingBit(CAN1,  CAN_IT_TME);
 }
 
 __attribute__((interrupt)) void
@@ -209,6 +212,7 @@ CAN1_SCE_IRQHandler(void) {
     }
 
     CAN_ClearFlag(CAN1, CAN_FLAG_EWG | CAN_FLAG_EPV | CAN_FLAG_BOF | CAN_FLAG_LEC);
+    CAN_ClearITPendingBit(CAN1,  CAN_IT_EWG | CAN_IT_EPV | CAN_IT_BOF | CAN_IT_LEC | CAN_IT_ERR);
 }
 #endif
 
