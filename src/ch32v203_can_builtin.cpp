@@ -109,6 +109,7 @@ USB_LP_CAN1_RX0_IRQHandler(void) {
         frame.timestamp = timestamp;
         frame.length = msg.DLC;
         frame.rtr = msg.RTR == CAN_RTR_Remote;
+        frame.fid = msg.FMI;
         if (!frame.rtr) {
             memcpy(&frame.data, msg.Data, frame.length);
         }
@@ -138,6 +139,7 @@ CAN1_RX1_IRQHandler(void) {
         frame.timestamp = timestamp;
         frame.length = msg.DLC;
         frame.rtr = msg.RTR == CAN_RTR_Remote;
+        frame.fid = msg.FMI;
         if (!frame.rtr) {
             memcpy(frame.data.bytes, msg.Data, frame.length);
         }
