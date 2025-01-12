@@ -267,7 +267,7 @@ void CAN_Rx_handler(void *pvParameters)
             }
             continue;
         }
-        espCan->processFrame(frame, frame.fid >> 2);
+        espCan->processFrame(frame, frame.fid);
     }
 }
 void CAN_Tx_handler(void *pvParameters)
