@@ -227,7 +227,7 @@ void ESP32CAN::_init()
     }
 
     if (!CAN_WatchDog_Builtin_handler) {
-        xTaskCreatePinnedToCore(&CAN_WatchDog_Builtin, "CAN_WD_BI", 2048, this, 10, &CAN_WatchDog_Builtin_handler, 1);
+        xTaskCreatePinnedToCore(&CAN_WatchDog_Builtin, "CAN_WD_BI", 2048, this, 10, &CAN_WatchDog_Builtin_handler, SOC_CPU_CORES_NUM - 1);
     }
     if (debuggingMode) Serial.println("_init done");
 }
@@ -251,7 +251,7 @@ uint32_t ESP32CAN::init(uint32_t ul_baudrate)
         }
     }
     //this task implements our better filtering on top of the TWAI library. Accept all frames then filter in here VVVVV
-    xTaskCreatePinnedToCore(&task_LowLevelRX, "CAN_LORX", 4096, this, 19, NULL, 1);
+    xTaskCreatePinnedToCore(&task_LowLevelRX, "CAN_LORX", 4096, this, 19, NULL, SOC_CPU_CORES_NUM - 1);
     readyForTraffic = true;
     return ul_baudrate;
 }
@@ -343,7 +343,7 @@ void ESP32CAN::enable()
 
     xTaskCreate(&task_CAN, "CAN_RX", 8192, this, 15, &task_CAN_handler);
     //this next task implements our better filtering on top of the TWAI library. Accept all frames then filter in here VVVVV
-    xTaskCreatePinnedToCore(&task_LowLevelRX, "CAN_LORX", 4096, this, 19, &task_LowLevelRX_handler, 1);
+    xTaskCreatePinnedToCore(&task_LowLevelRX, "CAN_LORX", 4096, this, 19, &task_LowLevelRX_handler, SOC_CPU_CORES_NUM - 1);
 
     // Start TWAI driver
     if (twai_start() == ESP_OK)
