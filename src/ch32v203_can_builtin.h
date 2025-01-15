@@ -78,10 +78,11 @@ public:
   uint16_t available(); //like rx_avail but returns the number of waiting frames
   uint32_t get_rx_buff(CAN_FRAME &msg);
   
-  void watchForList(uint8_t mailbox, uint32_t id1, uint32_t id2);
-  void watchForList(uint8_t mailbox, uint16_t id1, uint16_t id2, uint16_t id3, uint16_t id4);
-  void watchForMask(uint8_t mailbox, uint32_t id, uint32_t mask);
-  void watchForMask(uint8_t mailbox, uint16_t id1, uint16_t mask1, uint16_t id2, uint16_t mask2);
+  void watchForList(uint8_t mailbox, uint32_t id1, bool rtr1, uint32_t id2, bool rtr2);
+  void watchForList(uint8_t mailbox, uint16_t id1, bool rtr1, uint16_t id2, bool rtr2, uint16_t id3, bool rtr3, uint16_t id4, bool rtr4);
+  void watchForMask(uint8_t mailbox, uint32_t id, uint32_t mask, bool rtr = false, bool rtrMask = false, bool onlyExtendedId = false);
+  void watchForMask(uint8_t mailbox, uint16_t id1, uint16_t mask1, bool rtr1, bool rtrMask1,
+                    uint16_t id2, uint16_t mask2, bool rtr2, bool rtrMask2);
 
   friend void CAN_Rx_handler(void *pvParameters);
   friend void CAN_Tx_handler(void *pvParameters);

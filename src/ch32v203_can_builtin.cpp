@@ -316,12 +316,14 @@ void CH32CAN::setTXBufferSize(int newSize)
     txBufferSize = newSize;
 }
 
-void CH32CAN::watchForList(uint8_t mailbox, uint32_t id1, uint32_t id2) {
+void CH32CAN::watchForList(uint8_t mailbox, uint32_t id1, bool rtr1, uint32_t id2, bool rtr2) {
+    uint32_t fullFilterId1 = (id1 << 3) | (rtr1 ? 0x2 : 0) | 0x4;
+    uint32_t fullFilterId2 = (id2 << 3) | (rtr2 ? 0x2 : 0) | 0x4;
     CAN_FilterInitTypeDef filter {
-        .CAN_FilterIdHigh = (uint16_t) (id1 >> 16),
-        .CAN_FilterIdLow  = (uint16_t) (id1 & 0x0000FFFF),
-        .CAN_FilterMaskIdHigh = (uint16_t) (id2 >> 16),
-        .CAN_FilterMaskIdLow  = (uint16_t) (id2 & 0x0000FFFF),
+        .CAN_FilterIdHigh = (uint16_t) (fullFilterId1 >> 16),
+        .CAN_FilterIdLow  = (uint16_t) (fullFilterId1 & 0x0000FFFF),
+        .CAN_FilterMaskIdHigh = (uint16_t) (fullFilterId2 >> 16),
+        .CAN_FilterMaskIdLow  = (uint16_t) (fullFilterId2 & 0x0000FFFF),
         .CAN_FilterFIFOAssignment = ((mailbox & 1) ? CAN_Filter_FIFO1 : CAN_Filter_FIFO0), // Split between mailboxes to get more FIFO size
         .CAN_FilterNumber = mailbox,
         .CAN_FilterMode = CAN_FilterMode_IdList,
@@ -332,12 +334,16 @@ void CH32CAN::watchForList(uint8_t mailbox, uint32_t id1, uint32_t id2) {
     filterIsConfigured[mailbox] = true;
 }
 
-void CH32CAN::watchForList(uint8_t mailbox, uint16_t id1, uint16_t id2, uint16_t id3, uint16_t id4) {
+void CH32CAN::watchForList(uint8_t mailbox, uint16_t id1, bool rtr1, uint16_t id2, bool rtr2, uint16_t id3, bool rtr3, uint16_t id4, bool rtr4) {
+    uint16_t fullFilterId1 = (id1 << 5) | (rtr1 ? 0x10 : 0);
+    uint16_t fullFilterId2 = (id2 << 5) | (rtr2 ? 0x10 : 0);
+    uint16_t fullFilterId3 = (id3 << 5) | (rtr3 ? 0x10 : 0);
+    uint16_t fullFilterId4 = (id4 << 5) | (rtr4 ? 0x10 : 0);
     CAN_FilterInitTypeDef filter {
-        .CAN_FilterIdHigh = id2,
-        .CAN_FilterIdLow  = id1,
-        .CAN_FilterMaskIdHigh = id4,
-        .CAN_FilterMaskIdLow  = id3,
+        .CAN_FilterIdHigh = fullFilterId3,
+        .CAN_FilterIdLow  = fullFilterId1,
+        .CAN_FilterMaskIdHigh = fullFilterId4,
+        .CAN_FilterMaskIdLow  = fullFilterId2,
         .CAN_FilterFIFOAssignment = ((mailbox & 1) ? CAN_Filter_FIFO1 : CAN_Filter_FIFO0), // Split between mailboxes to get more FIFO size
         .CAN_FilterNumber = mailbox,
         .CAN_FilterMode = CAN_FilterMode_IdList,
@@ -348,12 +354,14 @@ void CH32CAN::watchForList(uint8_t mailbox, uint16_t id1, uint16_t id2, uint16_t
     filterIsConfigured[mailbox] = true;
 }
 
-void CH32CAN::watchForMask(uint8_t mailbox, uint32_t id, uint32_t mask) {
+void CH32CAN::watchForMask(uint8_t mailbox, uint32_t id, uint32_t mask, bool rtr, bool rtrMask, bool onlyExtendedId) {
+    uint32_t fullFilterId   = (id   << 3) | (rtr     ? 0x2 : 0) | 0x4;
+    uint32_t fullFilterMask = (mask << 3) | (rtrMask ? 0x2 : 0) | (onlyExtendedId ? 0x4 : 0);
     CAN_FilterInitTypeDef filter {
-        .CAN_FilterIdHigh = (uint16_t) (id >> 16),
-        .CAN_FilterIdLow  = (uint16_t) (id & 0x0000FFFF),
-        .CAN_FilterMaskIdHigh = (uint16_t) (mask >> 16),
-        .CAN_FilterMaskIdLow  = (uint16_t) (mask & 0x0000FFFF),
+        .CAN_FilterIdHigh = (uint16_t) (fullFilterId >> 16),
+        .CAN_FilterIdLow  = (uint16_t) (fullFilterId & 0x0000FFFF),
+        .CAN_FilterMaskIdHigh = (uint16_t) (fullFilterMask >> 16),
+        .CAN_FilterMaskIdLow  = (uint16_t) (fullFilterMask & 0x0000FFFF),
         .CAN_FilterFIFOAssignment = ((mailbox & 1) ? CAN_Filter_FIFO1 : CAN_Filter_FIFO0), // Split between mailboxes to get more FIFO size
         .CAN_FilterNumber = mailbox,
         .CAN_FilterMode = CAN_FilterMode_IdMask,
@@ -364,12 +372,17 @@ void CH32CAN::watchForMask(uint8_t mailbox, uint32_t id, uint32_t mask) {
     filterIsConfigured[mailbox] = true;
 }
 
-void CH32CAN::watchForMask(uint8_t mailbox, uint16_t id1, uint16_t mask1, uint16_t id2, uint16_t mask2) {
+void CH32CAN::watchForMask(uint8_t mailbox, uint16_t id1, uint16_t mask1, bool rtr1, bool rtrMask1,
+                           uint16_t id2, uint16_t mask2, bool rtr2, bool rtrMask2) {
+    uint16_t fullFilterId1   = (id1   << 5) | (rtr1     ? 0x10 : 0);
+    uint16_t fullFilterMask1 = (mask1 << 5) | (rtrMask1 ? 0x10 : 0) | 0x8;
+    uint16_t fullFilterId2   = (id2   << 5) | (rtr2     ? 0x10 : 0);
+    uint16_t fullFilterMask2 = (mask2 << 5) | (rtrMask2 ? 0x10 : 0) | 0x8;
     CAN_FilterInitTypeDef filter {
-        .CAN_FilterIdHigh = id2,
-        .CAN_FilterIdLow  = id1,
-        .CAN_FilterMaskIdHigh = mask2,
-        .CAN_FilterMaskIdLow  = mask1,
+        .CAN_FilterIdHigh = fullFilterId2,
+        .CAN_FilterIdLow  = fullFilterId1,
+        .CAN_FilterMaskIdHigh = fullFilterMask2,
+        .CAN_FilterMaskIdLow  = fullFilterMask1,
         .CAN_FilterFIFOAssignment = ((mailbox & 1) ? CAN_Filter_FIFO1 : CAN_Filter_FIFO0), // Split between mailboxes to get more FIFO size
         .CAN_FilterNumber = mailbox,
         .CAN_FilterMode = CAN_FilterMode_IdMask,
