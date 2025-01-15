@@ -18,9 +18,9 @@ typedef struct
 } VALID_TIMING;
 
 // FIXME: Hardcoded value
-#define CAN_CLOCK_FREQ SYSCLK_FREQ_144MHz_HSI
+#define CAN_CLOCK_FREQ (SYSCLK_FREQ_144MHz_HSI)/2
 
-#define CAN_BRP_FROM_RESOLUTION_HZ(freq) ((CAN_CLOCK_FREQ)/(freq) - 1)
+#define CAN_BRP_FROM_RESOLUTION_HZ(freq) ((CAN_CLOCK_FREQ)/(freq))
 
 #define CAN_TIMING_CONFIG(quanta_hz, ts1, ts2, sjw_v) {.brp = CAN_BRP_FROM_RESOLUTION_HZ((quanta_hz)), .tseg_1 = (ts1) - 1, .tseg_2 = (ts2) - 1, .sjw = (sjw_v) - 1}
 
@@ -82,7 +82,7 @@ static void frameToMsg(CanTxMsg *msg, const CAN_FRAME *frame) {
     msg->DLC = frame->length;
     msg->RTR = frame->rtr ? CAN_RTR_Remote : CAN_RTR_Data;
     if (!frame->rtr) {
-        memcpy(&msg->Data, &frame->data, frame->length);
+        memcpy(msg->Data, frame->data.bytes, frame->length);
     }
 }
 
@@ -99,23 +99,25 @@ USB_LP_CAN1_RX0_IRQHandler(void) {
 
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
-    while (CAN_MessagePending(CAN1, CAN_FIFO0) && !xQueueIsQueueFullFromISR(rx_queue)) {
-        uint16_t timestamp = CAN1->sFIFOMailBox->RXMDTR & CAN_RXMDT0R_TIME;
-        CAN_Receive(CAN1, CAN_FIFO0, &msg);
+    if (rx_queue) {
+        while (CAN_MessagePending(CAN1, CAN_FIFO0) && !xQueueIsQueueFullFromISR(rx_queue)) {
+            uint16_t timestamp = (CAN1->sFIFOMailBox[0].RXMDTR & CAN_RXMDT0R_TIME) >> 16;
+            CAN_Receive(CAN1, CAN_FIFO0, &msg);
 
-        CAN_FRAME frame;
-        frame.id = msg.StdId | msg.ExtId;
-        frame.extended = msg.IDE == CAN_Id_Extended;
-        frame.timestamp = timestamp;
-        frame.length = msg.DLC;
-        frame.rtr = msg.RTR == CAN_RTR_Remote;
-        frame.fid = msg.FMI;
-        if (!frame.rtr) {
-            memcpy(&frame.data, msg.Data, frame.length);
+            CAN_FRAME frame;
+            frame.id = msg.StdId | msg.ExtId;
+            frame.extended = msg.IDE == CAN_Id_Extended;
+            frame.timestamp = timestamp;
+            frame.length = msg.DLC;
+            frame.rtr = msg.RTR == CAN_RTR_Remote;
+            frame.fid = msg.FMI;
+            if (!frame.rtr) {
+                memcpy(frame.data.bytes, msg.Data, frame.length);
+            }
+            
+            xQueueSendFromISR(rx_queue, &frame, &xHigherPriorityTaskWoken);
+            if (xHigherPriorityTaskWoken != pdFALSE) { taskYIELD (); }
         }
-        
-        xQueueSendFromISR(rx_queue, &frame, &xHigherPriorityTaskWoken);
-        if (xHigherPriorityTaskWoken != pdFALSE) { taskYIELD (); }
     }
 
     CAN_ClearFlag(CAN1, CAN_FLAG_FMP0 | CAN_FLAG_FF0 | CAN_FLAG_FOV0);
@@ -129,23 +131,25 @@ CAN1_RX1_IRQHandler(void) {
 
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
-    while (CAN_MessagePending(CAN1, CAN_FIFO1) && !xQueueIsQueueFullFromISR(rx_queue)) {
-        uint16_t timestamp = CAN1->sFIFOMailBox->RXMDTR & CAN_RXMDT1R_TIME;
-        CAN_Receive(CAN1, CAN_FIFO1, &msg);
+    if (rx_queue) {
+        while (CAN_MessagePending(CAN1, CAN_FIFO1) && !xQueueIsQueueFullFromISR(rx_queue)) {
+            uint16_t timestamp = (CAN1->sFIFOMailBox[1].RXMDTR & CAN_RXMDT1R_TIME) >> 16;
+            CAN_Receive(CAN1, CAN_FIFO1, &msg);
 
-        CAN_FRAME frame;
-        frame.id = msg.StdId | msg.ExtId;
-        frame.extended = msg.IDE == CAN_Id_Extended;
-        frame.timestamp = timestamp;
-        frame.length = msg.DLC;
-        frame.rtr = msg.RTR == CAN_RTR_Remote;
-        frame.fid = msg.FMI;
-        if (!frame.rtr) {
-            memcpy(frame.data.bytes, msg.Data, frame.length);
+            CAN_FRAME frame;
+            frame.id = msg.StdId | msg.ExtId;
+            frame.extended = msg.IDE == CAN_Id_Extended;
+            frame.timestamp = timestamp;
+            frame.length = msg.DLC;
+            frame.rtr = msg.RTR == CAN_RTR_Remote;
+            frame.fid = msg.FMI;
+            if (!frame.rtr) {
+                memcpy(frame.data.bytes, msg.Data, frame.length);
+            }
+            
+            xQueueSendFromISR(rx_queue, &frame, &xHigherPriorityTaskWoken);
+            if (xHigherPriorityTaskWoken != pdFALSE) { taskYIELD (); }
         }
-        
-        xQueueSendFromISR(rx_queue, &frame, &xHigherPriorityTaskWoken);
-        if (xHigherPriorityTaskWoken != pdFALSE) { taskYIELD (); }
     }
 
     CAN_ClearFlag(CAN1, CAN_FLAG_FMP1 | CAN_FLAG_FF1 | CAN_FLAG_FOV1);
@@ -164,54 +168,56 @@ USB_HP_CAN1_TX_IRQHandler(void) {
 
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
-    for (int i = 0, j = 0; i < 3; ++i) {
-        switch (CAN_TransmitStatus(CAN1, i)) {
-        case CAN_TxStatus_Pending:
-            // This one is full, ignore it
-            // mailboxMessages_new[j] = mailboxMessages[i];
-            // mailboxRetransmitCounter_new[j] = mailboxRetransmitCounter[i];
-            break;
-            
-        case CAN_TxStatus_Failed:
-        //     // This queue has an error. Check what error it is and either discard or retransmit
-        //     if(mailboxRetransmitCounter[i] < CAN_MAX_RETRANSMIT_COUNT) {
-        //         uint8_t mb = CAN_TxStatus_NoMailBox;
-        //         do {
-        //             mb = CAN_Transmit(CAN1, mailboxMessages + i);
-        //         } while (mb == CAN_TxStatus_NoMailBox);
-        //         mailboxMessages_new[mb] = mailboxMessages[i];
-        //         mailboxRetransmitCounter_new[mb] = mailboxRetransmitCounter[i];
-        //         Serial.printf("Retransmit: %u\n", mailboxRetransmitCounter_new[mb]);
-        //         if (mb < i) {
-        //             i = mb;
-        //         }
-        //         break;
-        //     }
-            Serial.println("Drop CAN message");
-            // fallthrough
-        case CAN_TxStatus_Ok:
-            // This one has finished, get a new message from the queue and send it
-            if (xQueueReceiveFromISR(tx_queue, &frame, &xHigherPriorityTaskWoken) == pdTRUE) {
-                frameToMsg(&mailboxMessage, &frame);
-                uint8_t mb = CAN_TxStatus_NoMailBox;
-                do {
-                    mb = CAN_Transmit(CAN1, &mailboxMessage);
-                } while (mb == CAN_TxStatus_NoMailBox);
-                // mailboxMessages_new[mb] = mailboxMessages[i];
-                // if (mb < i) {
-                //     i = mb;
-                // }
-            } else {
-                vTaskNotifyGiveFromISR(CAN_Tx_handler_task, &xHigherPriorityTaskWoken);
-            }
-            
-            if (xHigherPriorityTaskWoken != pdFALSE) { taskYIELD (); }
+    if (tx_queue) {
+        for (int i = 0, j = 0; i < 3; ++i) {
+            switch (CAN_TransmitStatus(CAN1, i)) {
+            case CAN_TxStatus_Pending:
+                // This one is full, ignore it
+                // mailboxMessages_new[j] = mailboxMessages[i];
+                // mailboxRetransmitCounter_new[j] = mailboxRetransmitCounter[i];
+                break;
+                
+            case CAN_TxStatus_Failed:
+            //     // This queue has an error. Check what error it is and either discard or retransmit
+            //     if(mailboxRetransmitCounter[i] < CAN_MAX_RETRANSMIT_COUNT) {
+            //         uint8_t mb = CAN_TxStatus_NoMailBox;
+            //         do {
+            //             mb = CAN_Transmit(CAN1, mailboxMessages + i);
+            //         } while (mb == CAN_TxStatus_NoMailBox);
+            //         mailboxMessages_new[mb] = mailboxMessages[i];
+            //         mailboxRetransmitCounter_new[mb] = mailboxRetransmitCounter[i];
+            //         Serial.printf("Retransmit: %u\n", mailboxRetransmitCounter_new[mb]);
+            //         if (mb < i) {
+            //             i = mb;
+            //         }
+            //         break;
+            //     }
+                Serial.println("Drop CAN message");
+                // fallthrough
+            case CAN_TxStatus_Ok:
+                // This one has finished, get a new message from the queue and send it
+                if (xQueueReceiveFromISR(tx_queue, &frame, &xHigherPriorityTaskWoken) == pdTRUE) {
+                    frameToMsg(&mailboxMessage, &frame);
+                    uint8_t mb = CAN_TxStatus_NoMailBox;
+                    do {
+                        mb = CAN_Transmit(CAN1, &mailboxMessage);
+                    } while (mb == CAN_TxStatus_NoMailBox);
+                    // mailboxMessages_new[mb] = mailboxMessages[i];
+                    // if (mb < i) {
+                    //     i = mb;
+                    // }
+                } else {
+                    vTaskNotifyGiveFromISR(CAN_Tx_handler_task, &xHigherPriorityTaskWoken);
+                }
+                
+                if (xHigherPriorityTaskWoken != pdFALSE) { taskYIELD (); }
 
-            break;
+                break;
+            }
         }
+        // memcpy(mailboxMessages, mailboxMessages_new, 3 * sizeof(CanTxMsg));
+        // memcpy(mailboxRetransmitCounter, mailboxRetransmitCounter_new, 3 * sizeof(uint16_t));
     }
-    // memcpy(mailboxMessages, mailboxMessages_new, 3 * sizeof(CanTxMsg));
-    // memcpy(mailboxRetransmitCounter, mailboxRetransmitCounter_new, 3 * sizeof(uint16_t));
     
     CAN_ClearFlag(CAN1, CAN_FLAG_RQCP0 | CAN_FLAG_RQCP1 | CAN_FLAG_RQCP2);
     CAN_ClearITPendingBit(CAN1,  CAN_IT_TME);
@@ -224,6 +230,7 @@ CAN1_SCE_IRQHandler(void) {
         canNeedsBusReset = true;
     }
 
+    CAN_ClearFlag(CAN1, CAN_FLAG_EWG | CAN_FLAG_EPV | CAN_FLAG_BOF | CAN_FLAG_LEC);
     CAN_ClearITPendingBit(CAN1,  CAN_IT_EWG | CAN_IT_EPV | CAN_IT_BOF | CAN_IT_LEC | CAN_IT_ERR);
 }
 
@@ -264,7 +271,7 @@ void CAN_Rx_handler(void *pvParameters)
                 espCan->cyclesSinceTraffic = 0;
                 espCan->readyForTraffic = false;
                 printf("CAN bus reset");
-                // Reinitialize bus
+                // Clear bus flags
                 CAN_ClearFlag(CAN1, CAN_FLAG_EWG | CAN_FLAG_EPV | CAN_FLAG_BOF | CAN_FLAG_LEC);
             }
             continue;
@@ -413,20 +420,14 @@ uint32_t CH32CAN::init(uint32_t ul_baudrate)
 
     // Enable 5V pull-up (required for 5V CAN Transceivers that have no internal pull-up)
     // EXTEN->EXTEN_CTR = (EXTEN->EXTEN_CTR & (~EXTEN_USBD_LS) | EXTEN_USBD_PU_EN);
-    
-    set_baudrate(ul_baudrate);
-    
-    CAN_ITConfig(CAN1, CAN_IT_BOF | CAN_IT_FMP0 | CAN_IT_FMP1 | CAN_IT_FF0 | CAN_IT_FF1 | CAN_IT_TME, ENABLE);
-    if (debuggingMode)
-    {
-        CAN_ITConfig(CAN1, CAN_IT_EPV | CAN_IT_LEC | CAN_IT_ERR | CAN_IT_FOV0 | CAN_IT_FOV1, ENABLE);
-    }
 
     NVIC_EnableIRQ(USB_HP_CAN1_TX_IRQn);
     NVIC_EnableIRQ(USB_LP_CAN1_RX0_IRQn);
     NVIC_EnableIRQ(CAN1_RX1_IRQn);
     NVIC_EnableIRQ(CAN1_SCE_IRQn);
     
+    set_baudrate(ul_baudrate);
+
     readyForTraffic = true;
     return ul_baudrate;
 }
@@ -498,14 +499,13 @@ void CH32CAN::setListenOnlyMode(bool state)
 
 void CH32CAN::setNoACKMode(bool state)
 {
-    CAN_DBGFreeze(CAN1, state ? ENABLE : DISABLE);
 }
 
 void CH32CAN::enable()
 {
     CAN_InitTypeDef CAN_InitStructure = {
         .CAN_Prescaler = currentTimingConfig.brp,
-        .CAN_Mode = CAN_OperatingMode_Normal,
+        .CAN_Mode = CAN_Mode_Normal,
         .CAN_SJW = currentTimingConfig.sjw,
         .CAN_BS1 = currentTimingConfig.tseg_1,
         .CAN_BS2 = currentTimingConfig.tseg_2,
@@ -515,19 +515,27 @@ void CH32CAN::enable()
         // .CAN_NART = ENABLE,     // Don't resend messages automatically
         .CAN_NART = DISABLE,     // Resend messages automatically
         .CAN_RFLM = ENABLE,     // When the receiving FIFO overflows, don't receive new messages
-        .CAN_TXFP = DISABLE,    // Send priority is determined by the message identifier
+        .CAN_TXFP = ENABLE,    // Send priority is determined by the message identifier
     };
-    
-    if (CAN_Init(CAN1, &CAN_InitStructure) != CAN_InitStatus_Success) {
-        printf("Failed to setup CAN\n");
-        return;
-    }
 
     rx_queue = xQueueCreate(rxBufferSize, sizeof(CAN_FRAME));
     tx_queue = xQueueCreate(txBufferSize, sizeof(CAN_FRAME));
 
     xTaskCreate(CAN_Tx_handler, "CAN_TX", 256, this, configMAX_PRIORITIES - 1, &CAN_Tx_handler_task);
     xTaskCreate(CAN_Rx_handler, "CAN_RX", 512, this, configMAX_PRIORITIES - 1, &CAN_Rx_handler_task);
+    
+    if (CAN_Init(CAN1, &CAN_InitStructure) != CAN_InitStatus_Success) {
+        printf("Failed to setup CAN\n");
+        return;
+    }
+    CAN_DBGFreeze(CAN1, DISABLE);
+    CAN_WakeUp(CAN1);
+    
+    CAN_ITConfig(CAN1, CAN_IT_BOF | CAN_IT_FMP0 | CAN_IT_FMP1 | CAN_IT_FF0 | CAN_IT_FF1 | CAN_IT_TME, ENABLE);
+    if (debuggingMode)
+    {
+        CAN_ITConfig(CAN1, CAN_IT_EPV | CAN_IT_LEC | CAN_IT_ERR | CAN_IT_FOV0 | CAN_IT_FOV1, ENABLE);
+    }
     
     readyForTraffic = true;
 }
@@ -558,6 +566,10 @@ bool CH32CAN::processFrame(CAN_FRAME &frame, uint8_t filter_id)
     CANListener *thisListener;
 
     cyclesSinceTraffic = 0; //reset counter to show that we are receiving traffic
+
+    if (!readyForTraffic) {
+        return false;
+    }
 
     //frame is accepted, lets see if it matches a mailbox callback
     if (cbCANFrame[filter_id])
@@ -594,6 +606,7 @@ bool CH32CAN::processFrame(CAN_FRAME &frame, uint8_t filter_id)
 
 bool CH32CAN::sendFrame(CAN_FRAME& txFrame)
 {
+    if (!readyForTraffic) return false;
     return xQueueSend(tx_queue, &txFrame, pdMS_TO_TICKS(4)) == pdTRUE;
 }
 
