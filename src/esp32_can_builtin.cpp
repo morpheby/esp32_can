@@ -103,6 +103,9 @@ void CAN_WatchDog_Builtin( void *pvParameters )
                 {
                     printf("Could not initiate bus recovery!\n");
                 }
+            } else if (status_info.state == TWAI_STATE_STOPPED) {
+                printf("Recovering finished\n");
+                twai_start();
             }
         }
     }
@@ -122,6 +125,7 @@ void task_LowLevelRX(void *pvParameters)
         {
             if (twai_receive(&message, pdMS_TO_TICKS(100)) == ESP_OK)
             {
+                if (espCan->debuggingMode) Serial.write('R');
                 espCan->processFrame(message);
             }
         }
@@ -271,7 +275,9 @@ uint32_t ESP32CAN::beginAutoSpeed()
         twai_speed_cfg = valid_timings[idx].cfg;
         disable();
         Serial.print("Trying Speed ");
+        printf("Trying Speed ");
         Serial.print(valid_timings[idx].speed);
+        printf("%d", (int) valid_timings[idx].speed);
         enable();
         delay(600); //wait a while
         if (cyclesSinceTraffic < 2) //only would happen if there had been traffic
@@ -280,15 +286,18 @@ uint32_t ESP32CAN::beginAutoSpeed()
             twai_general_cfg.mode = oldMode.mode;
             enable();
             Serial.println(" SUCCESS!");
+            printf(" SUCCESS!\n");
             return valid_timings[idx].speed;
         }
         else
         {
             Serial.println(" FAILED.");
+            printf(" FAILED.\n");
         }
         idx++;
     }
     Serial.println("None of the tested CAN speeds worked!");
+    printf("None of the tested CAN speeds worked!\n");
     twai_stop();
     return 0;
 }
@@ -459,6 +468,9 @@ bool ESP32CAN::sendFrame(CAN_FRAME& txFrame)
     __TX_frame.data_length_code = txFrame.length;
     __TX_frame.rtr = txFrame.rtr;
     __TX_frame.extd = txFrame.extended;
+    __TX_frame.dlc_non_comp = 0;
+    __TX_frame.self = 0;
+    __TX_frame.ss = 0;
     for (int i = 0; i < 8; i++) __TX_frame.data[i] = txFrame.data.byte[i];
 
     //don't wait long if the queue was full. The end user code shouldn't be sending faster
