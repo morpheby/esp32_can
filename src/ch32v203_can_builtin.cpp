@@ -192,7 +192,8 @@ USB_HP_CAN1_TX_IRQHandler(void) {
             //         }
             //         break;
             //     }
-                Serial.println("Drop CAN message");
+            // check why we get tons of dropped messages
+                // Serial.println("Drop CAN message");
                 // fallthrough
             case CAN_TxStatus_Ok:
                 // This one has finished, get a new message from the queue and send it
@@ -266,7 +267,7 @@ void CAN_Rx_handler(void *pvParameters)
 
             if (lastError != CAN_ErrorCode_NoErr)
             {
-                printf("Errors detected on bus: %hu", lastError);
+                printf("Errors detected on bus: %x\n", (int)lastError);
             } else if (canNeedsBusReset) {
                 espCan->cyclesSinceTraffic = 0;
                 espCan->readyForTraffic = false;
@@ -534,8 +535,8 @@ void CH32CAN::enable()
     rx_queue = xQueueCreate(rxBufferSize, sizeof(CAN_FRAME));
     tx_queue = xQueueCreate(txBufferSize, sizeof(CAN_FRAME));
 
-    xTaskCreate(CAN_Tx_handler, "CAN_TX", 256, this, configMAX_PRIORITIES - 1, &CAN_Tx_handler_task);
-    xTaskCreate(CAN_Rx_handler, "CAN_RX", 512, this, configMAX_PRIORITIES - 1, &CAN_Rx_handler_task);
+    xTaskCreate(CAN_Tx_handler, "CAN_TX", 128, this, configMAX_PRIORITIES - 1, &CAN_Tx_handler_task);
+    xTaskCreate(CAN_Rx_handler, "CAN_RX", 256, this, configMAX_PRIORITIES - 1, &CAN_Rx_handler_task);
     
     if (CAN_Init(CAN1, &CAN_InitStructure) != CAN_InitStatus_Success) {
         printf("Failed to setup CAN\n");
