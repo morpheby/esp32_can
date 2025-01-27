@@ -105,12 +105,23 @@ USB_LP_CAN1_RX0_IRQHandler(void) {
             CAN_Receive(CAN1, CAN_FIFO0, &msg);
 
             CAN_FRAME frame;
-            frame.id = msg.StdId | msg.ExtId;
+            frame.id = (msg.IDE == CAN_Id_Extended) ? msg.ExtId : msg.StdId;
             frame.extended = msg.IDE == CAN_Id_Extended;
             frame.timestamp = timestamp;
             frame.length = msg.DLC;
             frame.rtr = msg.RTR == CAN_RTR_Remote;
-            frame.fid = msg.FMI;
+            uint8_t filterGrpNum = 0;
+            int filterNum = msg.FMI;
+            for (filterGrpNum = 0; filterGrpNum < 28; ++filterGrpNum) {
+                uint16_t mlt = 1;
+                uint32_t filter_number_bit_pos = ((uint32_t)1) << filterGrpNum;
+                if (CAN1->FAFIFOR & filter_number_bit_pos) continue;
+                if (!(CAN1->FSCFGR & filter_number_bit_pos)) mlt *= 2;
+                if (CAN1->FMCFGR & filter_number_bit_pos) mlt *= 2;
+                filterNum -= mlt;
+                if (filterNum < 0) break;
+            }
+            frame.fid = filterGrpNum;
             if (!frame.rtr) {
                 memcpy(frame.data.bytes, msg.Data, frame.length);
             }
@@ -120,7 +131,7 @@ USB_LP_CAN1_RX0_IRQHandler(void) {
         }
     }
 
-    CAN_ClearFlag(CAN1, CAN_FLAG_FMP0 | CAN_FLAG_FF0 | CAN_FLAG_FOV0);
+    CAN_ClearFlag(CAN1, CAN_FLAG_FF0 | CAN_FLAG_FOV0);
     CAN_ClearITPendingBit(CAN1,  CAN_IT_FMP0 | CAN_IT_FF0 | CAN_IT_FOV0);
 }
 
@@ -137,12 +148,23 @@ CAN1_RX1_IRQHandler(void) {
             CAN_Receive(CAN1, CAN_FIFO1, &msg);
 
             CAN_FRAME frame;
-            frame.id = msg.StdId | msg.ExtId;
+            frame.id = (msg.IDE == CAN_Id_Extended) ? msg.ExtId : msg.StdId;
             frame.extended = msg.IDE == CAN_Id_Extended;
             frame.timestamp = timestamp;
             frame.length = msg.DLC;
             frame.rtr = msg.RTR == CAN_RTR_Remote;
-            frame.fid = msg.FMI;
+            uint8_t filterGrpNum = 0;
+            int filterNum = msg.FMI;
+            for (filterGrpNum = 0; filterGrpNum < 28; ++filterGrpNum) {
+                uint16_t mlt = 1;
+                uint32_t filter_number_bit_pos = ((uint32_t)1) << filterGrpNum;
+                if (CAN1->FAFIFOR & filter_number_bit_pos) continue;
+                if (!(CAN1->FSCFGR & filter_number_bit_pos)) mlt *= 2;
+                if (CAN1->FMCFGR & filter_number_bit_pos) mlt *= 2;
+                filterNum -= mlt;
+                if (filterNum < 0) break;
+            }
+            frame.fid = filterGrpNum;
             if (!frame.rtr) {
                 memcpy(frame.data.bytes, msg.Data, frame.length);
             }
@@ -152,7 +174,7 @@ CAN1_RX1_IRQHandler(void) {
         }
     }
 
-    CAN_ClearFlag(CAN1, CAN_FLAG_FMP1 | CAN_FLAG_FF1 | CAN_FLAG_FOV1);
+    CAN_ClearFlag(CAN1, CAN_FLAG_FF1 | CAN_FLAG_FOV1);
     CAN_ClearITPendingBit(CAN1,  CAN_IT_FMP1 | CAN_IT_FF1 | CAN_IT_FOV1);
 }
 
