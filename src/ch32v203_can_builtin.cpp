@@ -158,7 +158,7 @@ CAN1_RX1_IRQHandler(void) {
             for (filterGrpNum = 0; filterGrpNum < 28; ++filterGrpNum) {
                 uint16_t mlt = 1;
                 uint32_t filter_number_bit_pos = ((uint32_t)1) << filterGrpNum;
-                if (CAN1->FAFIFOR & filter_number_bit_pos) continue;
+                if (!(CAN1->FAFIFOR & filter_number_bit_pos)) continue;
                 if (!(CAN1->FSCFGR & filter_number_bit_pos)) mlt *= 2;
                 if (CAN1->FMCFGR & filter_number_bit_pos) mlt *= 2;
                 filterNum -= mlt;
