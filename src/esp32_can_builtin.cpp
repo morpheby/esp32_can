@@ -479,7 +479,7 @@ bool ESP32CAN::sendFrame(CAN_FRAME& txFrame)
     {
     case ESP_OK:
         if (debuggingMode) Serial.write('<');
-        break;
+        return true;
     case ESP_ERR_TIMEOUT:
         if (debuggingMode) Serial.write('T');
         break;
@@ -491,7 +491,7 @@ bool ESP32CAN::sendFrame(CAN_FRAME& txFrame)
         break;
     }
     
-    return true;
+    return false;
 }
 
 bool ESP32CAN::rx_avail()
