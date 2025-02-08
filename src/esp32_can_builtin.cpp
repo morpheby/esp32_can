@@ -265,20 +265,20 @@ uint32_t ESP32CAN::init(uint32_t ul_baudrate)
 {
     _init();
     set_baudrate(ul_baudrate);
+    uint32_t alerts_to_enable = TWAI_ALERT_ERR_PASS | TWAI_ALERT_TX_IDLE | TWAI_ALERT_TX_SUCCESS | TWAI_ALERT_BUS_RECOVERED;
     if (debuggingMode)
     {
         //Reconfigure alerts to detect Error Passive and Bus-Off error states
-        uint32_t alerts_to_enable = TWAI_ALERT_ERR_PASS | TWAI_ALERT_BUS_OFF | TWAI_ALERT_AND_LOG | TWAI_ALERT_ERR_ACTIVE 
-                                  | TWAI_ALERT_ARB_LOST | TWAI_ALERT_BUS_ERROR | TWAI_ALERT_TX_FAILED | TWAI_ALERT_RX_QUEUE_FULL
-                                  | TWAI_ALERT_TX_IDLE | TWAI_ALERT_TX_SUCCESS | TWAI_ALERT_BUS_RECOVERED;
-        if (twai_reconfigure_alerts(alerts_to_enable, NULL) == ESP_OK)
-        {
-            printf("Alerts reconfigured\n");
-        }
-        else
-        {
-            printf("Failed to reconfigure alerts");
-        }
+        alerts_to_enable |= TWAI_ALERT_AND_LOG | TWAI_ALERT_BUS_OFF | TWAI_ALERT_ERR_ACTIVE 
+                          | TWAI_ALERT_ARB_LOST | TWAI_ALERT_BUS_ERROR | TWAI_ALERT_TX_FAILED | TWAI_ALERT_RX_QUEUE_FULL;
+    }
+    if (twai_reconfigure_alerts(alerts_to_enable, NULL) == ESP_OK)
+    {
+        if (debuggingMode) printf("Alerts reconfigured\n");
+    }
+    else
+    {
+        if (debuggingMode) printf("Failed to reconfigure alerts");
     }
     //this task implements our better filtering on top of the TWAI library. Accept all frames then filter in here
     xTaskCreatePinnedToCore(&task_LowLevelRX, "CAN_LORX", 4096, this, 19, NULL, SOC_CPU_CORES_NUM - 1);
