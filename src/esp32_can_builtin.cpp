@@ -12,21 +12,28 @@
 #include "esp32_can_builtin.h"
 
                                                                         //tx,         rx,           mode
-twai_general_config_t twai_general_cfg = TWAI_GENERAL_CONFIG_DEFAULT(GPIO_NUM_17, GPIO_NUM_16, TWAI_MODE_NORMAL);
-twai_timing_config_t twai_speed_cfg = TWAI_TIMING_CONFIG_500KBITS();
-twai_filter_config_t twai_filters_cfg = TWAI_FILTER_CONFIG_ACCEPT_ALL();
+static twai_general_config_t twai_general_cfg = TWAI_GENERAL_CONFIG_DEFAULT(GPIO_NUM_17, GPIO_NUM_16, TWAI_MODE_NORMAL);
+static twai_timing_config_t twai_speed_cfg = TWAI_TIMING_CONFIG_500KBITS();
+static twai_filter_config_t twai_filters_cfg = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 
-QueueHandle_t callbackQueue;
-QueueHandle_t rx_queue;
+static QueueHandle_t callbackQueue;
+static QueueHandle_t rx_queue;
 
-TaskHandle_t CAN_WatchDog_Builtin_handler = NULL;
-TaskHandle_t task_CAN_handler = NULL;
-TaskHandle_t task_LowLevelRX_handler = NULL;
+static TaskHandle_t CAN_WatchDog_Builtin_handler = NULL;
+static TaskHandle_t task_CAN_handler = NULL;
+static TaskHandle_t task_LowLevelRX_handler = NULL;
+
+#define EG_BUS_STATE_ERROR   0x00000001
+#define EG_BUS_STATE_IDLE    0x00000002
+#define EG_BUS_STATE_TX_OK   0x00000004
+#define EG_BUS_STATE_MASK    0x0000000F
+
+static EventGroupHandle_t busState_eventGroup = NULL;
 
 //because of the way the TWAI library works, it's just easier to store the valid timings here and anything not found here
 //is just plain not supported. If you need a different speed then add it here. Be sure to leave the zero record at the end
 //as it serves as a terminator
-const VALID_TIMING valid_timings[] = 
+static const VALID_TIMING valid_timings[] = 
 {
     {TWAI_TIMING_CONFIG_1MBITS(), 1000000},
     {TWAI_TIMING_CONFIG_500KBITS(), 500000},
@@ -87,26 +94,40 @@ void CAN_WatchDog_Builtin( void *pvParameters )
 {
     ESP32CAN* espCan = (ESP32CAN*)pvParameters;
     const TickType_t xDelay = 200 / portTICK_PERIOD_MS;
-    twai_status_info_t status_info;
+    esp_err_t result;
+    uint32_t twai_alerts = 0;
 
     for(;;)
     {
-        vTaskDelay( xDelay );
         espCan->cyclesSinceTraffic++;
 
-        if (twai_get_status_info(&status_info) == ESP_OK)
-        {
-            if (status_info.state == TWAI_STATE_BUS_OFF)
-            {
+        result = twai_read_alerts(&twai_alerts, xDelay);
+
+        if (result == ESP_OK) {
+            if (twai_alerts & TWAI_ALERT_TX_IDLE) {
+                xEventGroupSetBits(busState_eventGroup, EG_BUS_STATE_IDLE);
+            }
+            if (twai_alerts & TWAI_ALERT_TX_SUCCESS) {
+                xEventGroupSetBits(busState_eventGroup, EG_BUS_STATE_TX_OK);
+            }
+            if (twai_alerts & TWAI_ALERT_BUS_RECOVERED) {
+                printf("Recovering finished\n");
+                twai_start();
+                
+                xEventGroupClearBits(busState_eventGroup, EG_BUS_STATE_MASK);
+                xEventGroupSetBits(busState_eventGroup, EG_BUS_STATE_IDLE);
+            }
+            if (twai_alerts & TWAI_ALERT_ERR_PASS) {
+                xEventGroupClearBits(busState_eventGroup, EG_BUS_STATE_MASK);
+                xEventGroupSetBits(busState_eventGroup, EG_BUS_STATE_ERROR);
                 espCan->cyclesSinceTraffic = 0;
                 if (twai_initiate_recovery() != ESP_OK)
                 {
                     printf("Could not initiate bus recovery!\n");
                 }
-            } else if (status_info.state == TWAI_STATE_STOPPED) {
-                printf("Recovering finished\n");
-                twai_start();
             }
+        } else if (result == ESP_ERR_INVALID_STATE) {
+            vTaskDelay(xDelay);
         }
     }
 }
@@ -230,6 +251,10 @@ void ESP32CAN::_init()
         filters[i].configured = false;
     }
 
+    if (!busState_eventGroup) {
+        busState_eventGroup = xEventGroupCreate();
+    }
+
     if (!CAN_WatchDog_Builtin_handler) {
         xTaskCreatePinnedToCore(&CAN_WatchDog_Builtin, "CAN_WD_BI", 2048, this, 10, &CAN_WatchDog_Builtin_handler, SOC_CPU_CORES_NUM - 1);
     }
@@ -244,7 +269,8 @@ uint32_t ESP32CAN::init(uint32_t ul_baudrate)
     {
         //Reconfigure alerts to detect Error Passive and Bus-Off error states
         uint32_t alerts_to_enable = TWAI_ALERT_ERR_PASS | TWAI_ALERT_BUS_OFF | TWAI_ALERT_AND_LOG | TWAI_ALERT_ERR_ACTIVE 
-                                  | TWAI_ALERT_ARB_LOST | TWAI_ALERT_BUS_ERROR | TWAI_ALERT_TX_FAILED | TWAI_ALERT_RX_QUEUE_FULL;
+                                  | TWAI_ALERT_ARB_LOST | TWAI_ALERT_BUS_ERROR | TWAI_ALERT_TX_FAILED | TWAI_ALERT_RX_QUEUE_FULL
+                                  | TWAI_ALERT_TX_IDLE | TWAI_ALERT_TX_SUCCESS | TWAI_ALERT_BUS_RECOVERED;
         if (twai_reconfigure_alerts(alerts_to_enable, NULL) == ESP_OK)
         {
             printf("Alerts reconfigured\n");
@@ -254,7 +280,7 @@ uint32_t ESP32CAN::init(uint32_t ul_baudrate)
             printf("Failed to reconfigure alerts");
         }
     }
-    //this task implements our better filtering on top of the TWAI library. Accept all frames then filter in here VVVVV
+    //this task implements our better filtering on top of the TWAI library. Accept all frames then filter in here
     xTaskCreatePinnedToCore(&task_LowLevelRX, "CAN_LORX", 4096, this, 19, NULL, SOC_CPU_CORES_NUM - 1);
     readyForTraffic = true;
     return ul_baudrate;
@@ -337,6 +363,8 @@ void ESP32CAN::setNoACKMode(bool state)
 
 void ESP32CAN::enable()
 {
+    xEventGroupClearBits(busState_eventGroup, EG_BUS_STATE_MASK);
+
     if (twai_driver_install(&twai_general_cfg, &twai_speed_cfg, &twai_filters_cfg) == ESP_OK)
     {
         //printf("TWAI Driver installed\n");
@@ -460,6 +488,22 @@ bool ESP32CAN::processFrame(twai_message_t &frame)
     return false;
 }
 
+bool ESP32CAN::sendFrameSync(CAN_FRAME& txFrame, portTickType waitTimeout) {
+    if (!(xEventGroupWaitBits(busState_eventGroup, EG_BUS_STATE_IDLE, false, true, waitTimeout) & EG_BUS_STATE_IDLE)) {
+        return false;
+    }
+
+    if (!sendFrame(txFrame)) {
+        return false;
+    }
+    
+    if (!(xEventGroupWaitBits(busState_eventGroup, EG_BUS_STATE_TX_OK | EG_BUS_STATE_IDLE, false, false, waitTimeout) & EG_BUS_STATE_TX_OK)) {
+        return false;
+    }
+
+    return true;
+}
+
 bool ESP32CAN::sendFrame(CAN_FRAME& txFrame)
 {
     twai_message_t __TX_frame;
@@ -472,6 +516,8 @@ bool ESP32CAN::sendFrame(CAN_FRAME& txFrame)
     __TX_frame.self = 0;
     __TX_frame.ss = 0;
     for (int i = 0; i < 8; i++) __TX_frame.data[i] = txFrame.data.byte[i];
+
+    xEventGroupClearBits(busState_eventGroup, EG_BUS_STATE_IDLE);
 
     //don't wait long if the queue was full. The end user code shouldn't be sending faster
     //than the buffer can empty. Set a bigger TX buffer or delay sending if this is a problem.

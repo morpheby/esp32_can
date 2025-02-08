@@ -86,6 +86,8 @@ public:
   bool processFrame(twai_message_t &frame);
   void sendCallback(CAN_FRAME *frame);
 
+  bool sendFrameSync(CAN_FRAME& txFrame, portTickType waitTimeout);
+
   void setCANPins(gpio_num_t rxPin, gpio_num_t txPin);
 
   friend void CAN_WatchDog_Builtin( void *pvParameters );
@@ -100,7 +102,5 @@ private:
   ESP32_FILTER filters[BI_NUM_FILTERS];
   int rxBufferSize;
 };
-
-extern QueueHandle_t callbackQueue;
 
 #endif
