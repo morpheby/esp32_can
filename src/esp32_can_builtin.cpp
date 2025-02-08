@@ -517,7 +517,7 @@ bool ESP32CAN::sendFrame(CAN_FRAME& txFrame)
     __TX_frame.ss = 0;
     for (int i = 0; i < 8; i++) __TX_frame.data[i] = txFrame.data.byte[i];
 
-    xEventGroupClearBits(busState_eventGroup, EG_BUS_STATE_IDLE);
+    xEventGroupClearBits(busState_eventGroup, EG_BUS_STATE_IDLE | EG_BUS_STATE_TX_OK);
 
     //don't wait long if the queue was full. The end user code shouldn't be sending faster
     //than the buffer can empty. Set a bigger TX buffer or delay sending if this is a problem.
