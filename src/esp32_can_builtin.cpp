@@ -436,7 +436,7 @@ bool ESP32CAN::processFrame(twai_message_t &frame)
     msg.length = frame.data_length_code;
     msg.rtr = frame.rtr;
     msg.extended = frame.extd;
-    msg.timestamp = (uint32_t) pdTICKS_TO_MS(esp_timer_get_time());
+    msg.timestamp = esp_timer_get_time();
     for (int i = 0; i < 8; i++) msg.data.byte[i] = frame.data[i];
     
     for (int i = 0; i < BI_NUM_FILTERS; i++)
