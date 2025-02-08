@@ -488,7 +488,7 @@ bool ESP32CAN::processFrame(twai_message_t &frame)
     return false;
 }
 
-bool ESP32CAN::sendFrameSync(CAN_FRAME& txFrame, portTickType waitTimeout) {
+bool ESP32CAN::sendFrameSync(CAN_FRAME& txFrame, TickType_t waitTimeout) {
     if (!(xEventGroupWaitBits(busState_eventGroup, EG_BUS_STATE_IDLE, false, true, waitTimeout) & EG_BUS_STATE_IDLE)) {
         return false;
     }
