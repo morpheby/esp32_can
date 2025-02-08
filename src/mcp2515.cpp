@@ -330,7 +330,7 @@ bool MCP2515::_init(uint32_t CAN_Bus_Speed, uint8_t Freq, uint8_t SJW, bool auto
   byte data = (((SJW-1) << 6) | BRP);
   Write(CNF1, data);
   Write(CNF2, ((BTLMODE << 7) | (SAMPLE << 6) | ((PHSEG1-1) << 3) | (PRSEG-1)));
-  Write(CNF3, (B10000000 | (PHSEG2-1)));
+  Write(CNF3, (0b10000000 | (PHSEG2-1)));
   Write(TXRTSCTRL,0);
 
   Write(CNF1, data);
@@ -560,19 +560,19 @@ CAN_FRAME MCP2515::ReadBuffer(uint8_t buffer) {
   uint8_t byte4 = SPI.transfer(0x00); // RXBnEID0
   uint8_t byte5 = SPI.transfer(0x00); // RXBnDLC
 
-  message.extended = (byte2 & B00001000);
+  message.extended = (byte2 & 0b00001000);
 
   if(message.extended) {
     message.id = (byte1>>3);
-    message.id = (message.id<<8) | ((byte1<<5) | ((byte2>>5)<<2) | (byte2 & B00000011));
+    message.id = (message.id<<8) | ((byte1<<5) | ((byte2>>5)<<2) | (byte2 & 0b00000011));
     message.id = (message.id<<8) | byte3;
     message.id = (message.id<<8) | byte4;
   } else {
     message.id = ((byte1>>5)<<8) | ((byte1<<3) | (byte2>>5));
   }
 
-  message.rtr=(byte5 & B01000000);
-  message.length = (byte5 & B00001111);  // Number of data bytes
+  message.rtr=(byte5 & 0b01000000);
+  message.length = (byte5 & 0b00001111);  // Number of data bytes
   for(int i=0; i<message.length; i++) {
     message.data.byte[i] = SPI.transfer(0x00);
   }
@@ -628,20 +628,20 @@ void MCP2515::LoadBuffer(uint8_t buffer, CAN_FRAME *message) {
 
   if(message->extended) {
     byte1 = byte((message->id<<3)>>24); // 8 MSBits of SID
-	byte2 = byte((message->id<<11)>>24) & B11100000; // 3 LSBits of SID
+	byte2 = byte((message->id<<11)>>24) & 0b11100000; // 3 LSBits of SID
 	byte2 = byte2 | byte((message->id<<14)>>30); // 2 MSBits of EID
-	byte2 = byte2 | B00001000; // EXIDE
+	byte2 = byte2 | 0b00001000; // EXIDE
     byte3 = byte((message->id<<16)>>24); // EID Bits 15-8
     byte4 = byte((message->id<<24)>>24); // EID Bits 7-0
   } else {
     byte1 = byte((message->id<<21)>>24); // 8 MSBits of SID
-	byte2 = byte((message->id<<29)>>24) & B11100000; // 3 LSBits of SID
+	byte2 = byte((message->id<<29)>>24) & 0b11100000; // 3 LSBits of SID
     byte3 = 0; // TXBnEID8
     byte4 = 0; // TXBnEID0
   }
   byte5 = message->length;
   if(message->rtr) {
-    byte5 = byte5 | B01000000;
+    byte5 = byte5 | 0b01000000;
   }
   
   if (!inhibitTransactions) SPI.beginTransaction(mcpSPISettings);
@@ -732,7 +732,7 @@ bool MCP2515::Mode(byte mode) {
   MODE_SLEEP
   MODE_NORMAL
   */
-  BitModify(CANCTRL, B11100000, mode);
+  BitModify(CANCTRL, 0b11100000, mode);
   delay(10); // allow for any transmissions to complete
   uint8_t data = Read(CANSTAT); // check mode has been set
   return ((data & mode)==mode);
@@ -836,7 +836,7 @@ void MCP2515::GetRXFilter(uint8_t filter, uint32_t &filterVal, boolean &isExtend
     filterVal |= temp_buff[1] >> 5;
     isExtended = false;
 
-    if (temp_buff[1] & B00001000) //extended / 29 bit filter - get the remaining 18 bits we need
+    if (temp_buff[1] & 0b00001000) //extended / 29 bit filter - get the remaining 18 bits we need
     {
         isExtended = true;
         filterVal |= (temp_buff[1] & 3) << 27;

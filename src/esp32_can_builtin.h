@@ -37,9 +37,7 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "driver/gpio.h"
-#include "driver/adc.h"
 #include "esp_system.h"
-#include "esp_adc_cal.h"
 #include "driver/twai.h"
 
 //#define DEBUG_SETUP
