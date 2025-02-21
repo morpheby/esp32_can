@@ -126,7 +126,7 @@ void CAN_WatchDog_Builtin( void *pvParameters )
                     printf("Could not initiate bus recovery!\n");
                 }
             }
-        } else if (result == ESP_ERR_INVALID_STATE) {
+        } else if (result != ESP_ERR_TIMEOUT) {
             vTaskDelay(xDelay);
         }
     }
