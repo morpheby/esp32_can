@@ -500,7 +500,7 @@ bool ESP32CAN::sendFrameSync(CAN_FRAME& txFrame, TickType_t waitTimeout) {
         return false;
     }
     
-    if (!(xEventGroupWaitBits(busState_eventGroup, EG_BUS_STATE_TX_OK | EG_BUS_STATE_IDLE, false, false, waitTimeout) & EG_BUS_STATE_TX_OK)) {
+    if (!(xEventGroupWaitBits(busState_eventGroup, EG_BUS_STATE_TX_OK | EG_BUS_STATE_IDLE, false, true, waitTimeout) & EG_BUS_STATE_TX_OK)) {
         return false;
     }
 
