@@ -118,6 +118,9 @@ void CAN_WatchDog_Builtin( void *pvParameters )
                 xEventGroupSetBits(busState_eventGroup, EG_BUS_STATE_IDLE);
             }
             if (twai_alerts & TWAI_ALERT_ERR_PASS) {
+                printf("Bus became error passive\n");
+            }
+            if (twai_alerts & TWAI_ALERT_BUS_OFF) {
                 xEventGroupClearBits(busState_eventGroup, EG_BUS_STATE_MASK);
                 xEventGroupSetBits(busState_eventGroup, EG_BUS_STATE_ERROR);
                 espCan->cyclesSinceTraffic = 0;
@@ -265,11 +268,10 @@ uint32_t ESP32CAN::init(uint32_t ul_baudrate)
 {
     _init();
     set_baudrate(ul_baudrate);
-    uint32_t alerts_to_enable = TWAI_ALERT_ERR_PASS | TWAI_ALERT_TX_IDLE | TWAI_ALERT_TX_SUCCESS | TWAI_ALERT_BUS_RECOVERED;
+    uint32_t alerts_to_enable = TWAI_ALERT_ERR_PASS | TWAI_ALERT_BUS_OFF | TWAI_ALERT_TX_IDLE | TWAI_ALERT_TX_SUCCESS | TWAI_ALERT_BUS_RECOVERED;
     if (debuggingMode)
     {
-        //Reconfigure alerts to detect Error Passive and Bus-Off error states
-        alerts_to_enable |= TWAI_ALERT_AND_LOG | TWAI_ALERT_BUS_OFF | TWAI_ALERT_ERR_ACTIVE 
+        alerts_to_enable |= TWAI_ALERT_AND_LOG | TWAI_ALERT_ERR_ACTIVE 
                           | TWAI_ALERT_ARB_LOST | TWAI_ALERT_BUS_ERROR | TWAI_ALERT_TX_FAILED | TWAI_ALERT_RX_QUEUE_FULL;
     }
     if (twai_reconfigure_alerts(alerts_to_enable, NULL) == ESP_OK)
