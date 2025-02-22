@@ -258,9 +258,6 @@ void ESP32CAN::_init()
         busState_eventGroup = xEventGroupCreate();
     }
 
-    if (!CAN_WatchDog_Builtin_handler) {
-        xTaskCreatePinnedToCore(&CAN_WatchDog_Builtin, "CAN_WD_BI", 2048, this, 10, &CAN_WatchDog_Builtin_handler, SOC_CPU_CORES_NUM - 1);
-    }
     if (debuggingMode) Serial.println("_init done");
 }
 
@@ -377,6 +374,10 @@ void ESP32CAN::enable()
         return;
     }
 
+    if (!CAN_WatchDog_Builtin_handler) {
+        xTaskCreatePinnedToCore(&CAN_WatchDog_Builtin, "CAN_WD_BI", 2048, this, 10, &CAN_WatchDog_Builtin_handler, SOC_CPU_CORES_NUM - 1);
+    }
+
     callbackQueue = xQueueCreate(16, sizeof(CAN_FRAME));
     rx_queue = xQueueCreate(rxBufferSize, sizeof(CAN_FRAME));
 
@@ -418,6 +419,9 @@ void ESP32CAN::disable()
                 vQueueDelete(queue);
             }
         }
+
+        vTaskDelete(CAN_WatchDog_Builtin_handler);
+        CAN_WatchDog_Builtin_handler = NULL;
 
         twai_driver_uninstall();
     } else {
