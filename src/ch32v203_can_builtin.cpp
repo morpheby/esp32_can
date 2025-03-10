@@ -290,12 +290,37 @@ void CAN_Rx_handler(void *pvParameters)
             if (lastError != CAN_ErrorCode_NoErr)
             {
                 printf("Errors detected on bus: %x\n", (int)lastError);
-            } else if (canNeedsBusReset) {
+            }
+            if (canNeedsBusReset) {
                 espCan->cyclesSinceTraffic = 0;
                 espCan->readyForTraffic = false;
+                canNeedsBusReset = false;
                 printf("CAN bus reset");
                 // Clear bus flags
                 CAN_ClearFlag(CAN1, CAN_FLAG_EWG | CAN_FLAG_EPV | CAN_FLAG_BOF | CAN_FLAG_LEC);
+                
+                CAN_InitTypeDef CAN_InitStructure = {
+                    .CAN_Prescaler = espCan->currentTimingConfig.brp,
+                    .CAN_Mode = CAN_Mode_Normal,
+                    .CAN_SJW = espCan->currentTimingConfig.sjw,
+                    .CAN_BS1 = espCan->currentTimingConfig.tseg_1,
+                    .CAN_BS2 = espCan->currentTimingConfig.tseg_2,
+                    .CAN_TTCM = DISABLE,    // Don't use TTCAN
+                    .CAN_ABOM = DISABLE,    // Manually reset bus after error
+                    .CAN_AWUM = DISABLE,    // Manually wake-up from sleep
+                    // .CAN_NART = ENABLE,     // Don't resend messages automatically
+                    .CAN_NART = DISABLE,     // Resend messages automatically
+                    .CAN_RFLM = ENABLE,     // When the receiving FIFO overflows, don't receive new messages
+                    .CAN_TXFP = ENABLE,    // Send priority is determined by the message identifier
+                };
+
+                if (CAN_Init(CAN1, &CAN_InitStructure) != CAN_InitStatus_Success) {
+                    printf("Failed to setup CAN\n");
+                    return;
+                }
+                CAN_DBGFreeze(CAN1, DISABLE);
+                CAN_WakeUp(CAN1);
+                espCan->readyForTraffic = true;
             }
             continue;
         }
@@ -567,10 +592,10 @@ void CH32CAN::enable()
     CAN_DBGFreeze(CAN1, DISABLE);
     CAN_WakeUp(CAN1);
     
-    CAN_ITConfig(CAN1, CAN_IT_BOF | CAN_IT_FMP0 | CAN_IT_FMP1 | CAN_IT_FF0 | CAN_IT_FF1 | CAN_IT_TME, ENABLE);
+    CAN_ITConfig(CAN1, CAN_IT_BOF | CAN_IT_EPV | CAN_IT_ERR | CAN_IT_FMP0 | CAN_IT_FMP1 | CAN_IT_FF0 | CAN_IT_FF1 | CAN_IT_TME, ENABLE);
     if (debuggingMode)
     {
-        CAN_ITConfig(CAN1, CAN_IT_EPV | CAN_IT_LEC | CAN_IT_ERR | CAN_IT_FOV0 | CAN_IT_FOV1, ENABLE);
+        CAN_ITConfig(CAN1, CAN_IT_LEC | CAN_IT_ERR | CAN_IT_FOV0 | CAN_IT_FOV1, ENABLE);
     }
     
     readyForTraffic = true;
@@ -582,18 +607,24 @@ void CH32CAN::disable()
 
     CAN_DeInit(CAN1);
 
-    for (auto task : {CAN_Tx_handler_task, CAN_Rx_handler_task}) {
-        if (task != NULL)
-        {
-            vTaskDelete(task);
-            task = NULL;
-        }
+    if (CAN_Tx_handler_task != NULL)
+    {
+        vTaskDelete(CAN_Tx_handler_task);
+        CAN_Tx_handler_task = NULL;
+    }
+    if (CAN_Rx_handler_task != NULL)
+    {
+        vTaskDelete(CAN_Rx_handler_task);
+        CAN_Rx_handler_task = NULL;
     }
 
-    for (auto queue : {rx_queue, tx_queue}) {
-        if (queue) {
-            vQueueDelete(queue);
-        }
+    if (rx_queue) {
+        vQueueDelete(rx_queue);
+        rx_queue = NULL;
+    }
+    if (tx_queue) {
+        vQueueDelete(tx_queue);
+        tx_queue = NULL;
     }
 }
 
