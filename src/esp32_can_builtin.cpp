@@ -279,8 +279,6 @@ uint32_t ESP32CAN::init(uint32_t ul_baudrate)
     {
         if (debuggingMode) printf("Failed to reconfigure alerts");
     }
-    //this task implements our better filtering on top of the TWAI library. Accept all frames then filter in here
-    xTaskCreatePinnedToCore(&task_LowLevelRX, "CAN_LORX", 4096, this, 19, NULL, SOC_CPU_CORES_NUM - 1);
     readyForTraffic = true;
     return ul_baudrate;
 }
