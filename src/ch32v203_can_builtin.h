@@ -71,7 +71,7 @@ public:
   void setNoACKMode(bool state);
   void enable();
   void disable();
-  bool sendFrame(CAN_FRAME& txFrame);
+  bool sendFrame(CAN_FRAME const &txFrame);
   bool rx_avail();
   void setRXBufferSize(int newSize);
   void setTXBufferSize(int newSize);

@@ -671,7 +671,7 @@ bool CH32CAN::processFrame(CAN_FRAME &frame, uint8_t filter_id)
     return true;
 }
 
-bool CH32CAN::sendFrame(CAN_FRAME& txFrame)
+bool CH32CAN::sendFrame(CAN_FRAME const &txFrame)
 {
     if (!readyForTraffic) return false;
     return xQueueSend(tx_queue, &txFrame, pdMS_TO_TICKS(4)) == pdTRUE;
