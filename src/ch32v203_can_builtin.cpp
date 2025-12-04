@@ -92,8 +92,7 @@ static void frameToMsg(CanTxMsg *msg, const CAN_FRAME *frame) {
 
 extern "C" {
 
-__attribute__((interrupt)) void
-USB_LP_CAN1_RX0_IRQHandler(void) {
+ISR void USB_LP_CAN1_RX0_IRQHandler(void) {
     // CAN FIFO0
     static CanRxMsg msg;
 
@@ -135,8 +134,7 @@ USB_LP_CAN1_RX0_IRQHandler(void) {
     CAN_ClearITPendingBit(CAN1,  CAN_IT_FMP0 | CAN_IT_FF0 | CAN_IT_FOV0);
 }
 
-__attribute__((interrupt)) void
-CAN1_RX1_IRQHandler(void) {
+ISR void CAN1_RX1_IRQHandler(void) {
     // CAN FIFO1
     static CanRxMsg msg;
 
@@ -178,8 +176,7 @@ CAN1_RX1_IRQHandler(void) {
     CAN_ClearITPendingBit(CAN1,  CAN_IT_FMP1 | CAN_IT_FF1 | CAN_IT_FOV1);
 }
 
-__attribute__((interrupt)) void
-USB_HP_CAN1_TX_IRQHandler(void) {
+ISR void USB_HP_CAN1_TX_IRQHandler(void) {
     // CAN TX
     // Find an empty mailbox or a mailbox with a failure
     // CanTxMsg mailboxMessages_new[3];
@@ -246,8 +243,7 @@ USB_HP_CAN1_TX_IRQHandler(void) {
     CAN_ClearITPendingBit(CAN1,  CAN_IT_TME);
 }
 
-__attribute__((interrupt)) void
-CAN1_SCE_IRQHandler(void) {
+ISR void CAN1_SCE_IRQHandler(void) {
     // CAN Error
     if (CAN_GetFlagStatus(CAN1, CAN_FLAG_BOF) == SET) {
         canNeedsBusReset = true;
@@ -677,7 +673,7 @@ bool CH32CAN::processFrame(CAN_FRAME &frame, uint8_t filter_id)
     return true;
 }
 
-bool CH32CAN::sendFrame(CAN_FRAME& txFrame)
+bool CH32CAN::sendFrame(CAN_FRAME const &txFrame)
 {
     if (!readyForTraffic) return false;
     return xQueueSend(tx_queue, &txFrame, pdMS_TO_TICKS(4)) == pdTRUE;
