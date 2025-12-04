@@ -252,9 +252,15 @@ CAN1_SCE_IRQHandler(void) {
     if (CAN_GetFlagStatus(CAN1, CAN_FLAG_BOF) == SET) {
         canNeedsBusReset = true;
     }
+    if (CAN_GetFlagStatus(CAN1, CAN_FLAG_EPV) == SET) {
+        canNeedsBusReset = true;
+    }
+    if (CAN_GetFlagStatus(CAN1, CAN_FLAG_SLAK) == SET) {
+        canNeedsBusReset = true;
+    }
 
-    CAN_ClearFlag(CAN1, CAN_FLAG_EWG | CAN_FLAG_EPV | CAN_FLAG_BOF | CAN_FLAG_LEC);
-    CAN_ClearITPendingBit(CAN1,  CAN_IT_EWG | CAN_IT_EPV | CAN_IT_BOF | CAN_IT_LEC | CAN_IT_ERR);
+    CAN_ClearFlag(CAN1, CAN_FLAG_EWG | CAN_FLAG_EPV | CAN_FLAG_BOF | CAN_FLAG_LEC | CAN_FLAG_SLAK);
+    CAN_ClearITPendingBit(CAN1,  CAN_IT_EWG | CAN_IT_EPV | CAN_IT_BOF | CAN_IT_LEC | CAN_IT_ERR | CAN_IT_WKU | CAN_IT_SLK);
 }
 
 }
@@ -289,13 +295,13 @@ void CAN_Rx_handler(void *pvParameters)
 
             if (lastError != CAN_ErrorCode_NoErr)
             {
-                printf("Errors detected on bus: %x\n", (int)lastError);
+                // printf("Errors detected on bus: %x\n", (int)lastError);
             }
             if (canNeedsBusReset) {
                 espCan->cyclesSinceTraffic = 0;
                 espCan->readyForTraffic = false;
                 canNeedsBusReset = false;
-                printf("CAN bus reset");
+                // printf("CAN bus reset");
                 // Clear bus flags
                 CAN_ClearFlag(CAN1, CAN_FLAG_EWG | CAN_FLAG_EPV | CAN_FLAG_BOF | CAN_FLAG_LEC);
                 
@@ -315,7 +321,7 @@ void CAN_Rx_handler(void *pvParameters)
                 };
 
                 if (CAN_Init(CAN1, &CAN_InitStructure) != CAN_InitStatus_Success) {
-                    printf("Failed to setup CAN\n");
+                    // printf("Failed to setup CAN\n");
                     return;
                 }
                 CAN_DBGFreeze(CAN1, DISABLE);
@@ -471,7 +477,7 @@ uint32_t CH32CAN::init(uint32_t ul_baudrate)
     GPIO_InitTypeDef      GPIO_InitStructure = {0};
 
     GPIO_InitStructure.GPIO_Pin = GPIO_Pin_12;
-    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_OD;
+    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
     GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
     GPIO_Init(GPIOA, &GPIO_InitStructure);
 
@@ -592,7 +598,7 @@ void CH32CAN::enable()
     CAN_DBGFreeze(CAN1, DISABLE);
     CAN_WakeUp(CAN1);
     
-    CAN_ITConfig(CAN1, CAN_IT_BOF | CAN_IT_EPV | CAN_IT_ERR | CAN_IT_FMP0 | CAN_IT_FMP1 | CAN_IT_FF0 | CAN_IT_FF1 | CAN_IT_TME, ENABLE);
+    CAN_ITConfig(CAN1, CAN_IT_BOF | CAN_IT_SLK | CAN_IT_EPV | CAN_IT_ERR | CAN_IT_FMP0 | CAN_IT_FMP1 | CAN_IT_FF0 | CAN_IT_FF1 | CAN_IT_TME, ENABLE);
     if (debuggingMode)
     {
         CAN_ITConfig(CAN1, CAN_IT_LEC | CAN_IT_ERR | CAN_IT_FOV0 | CAN_IT_FOV1, ENABLE);
