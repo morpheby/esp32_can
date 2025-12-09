@@ -11,6 +11,12 @@
 #include "ch32v203_can_builtin.h"
 #include "ch32v20x_can.h"
 
+#if __has_include("spdlog/spdlog.h")
+#include "spdlog/spdlog.h"
+#define SPDLOG_DEBUG
+auto log = spdlog::get("CAN");
+#endif
+
 typedef struct
 {
     CANTimingConfig_t cfg;
@@ -291,13 +297,19 @@ void CAN_Rx_handler(void *pvParameters)
 
             if (lastError != CAN_ErrorCode_NoErr)
             {
-                // printf("Errors detected on bus: %x\n", (int)lastError);
+                #ifdef SPDLOG_DEBUG
+                log->warn(FMT_STRING("CAN error detected on bus: {:x}"), (int)lastError);
+                #endif
             }
             if (canNeedsBusReset) {
                 espCan->cyclesSinceTraffic = 0;
                 espCan->readyForTraffic = false;
                 canNeedsBusReset = false;
-                // printf("CAN bus reset");
+
+                #ifdef SPDLOG_DEBUG
+                log->warn("CAN bus will be reset");
+                #endif
+
                 // Clear bus flags
                 CAN_ClearFlag(CAN1, CAN_FLAG_EWG | CAN_FLAG_EPV | CAN_FLAG_BOF | CAN_FLAG_LEC);
                 
@@ -317,7 +329,9 @@ void CAN_Rx_handler(void *pvParameters)
                 };
 
                 if (CAN_Init(CAN1, &CAN_InitStructure) != CAN_InitStatus_Success) {
-                    // printf("Failed to setup CAN\n");
+                    #ifdef SPDLOG_DEBUG
+                    log->error("Failed to setup CAN");
+                    #endif
                     return;
                 }
                 CAN_DBGFreeze(CAN1, DISABLE);
@@ -463,7 +477,9 @@ int CH32CAN::_setFilter(uint32_t id, uint32_t mask, bool extended)
         }
     }
     
-    if (debuggingMode) Serial.println("Could not set filter!");
+    #ifdef SPDLOG_DEBUG
+    log->debug(FMT_STRING("Filter {:x} was not set"), (int)id);
+    #endif
 
     return -1;
 }
@@ -509,24 +525,35 @@ uint32_t CH32CAN::beginAutoSpeed()
     {
         disable();
         currentTimingConfig = valid_timings[idx].cfg;
-        Serial.print("Trying Speed ");
-        Serial.print(valid_timings[idx].speed);
+
+        #ifdef SPDLOG_DEBUG
+        log->info(FMT_STRING("Autospeed, trying {}"), (int) valid_timings[idx].speed);
+        #endif
+
         enable();
         delay(600); //wait a while
         if (cyclesSinceTraffic < 2) //only would happen if there had been traffic
         {
             setListenOnlyMode(oldListenMode);
-            Serial.println(" SUCCESS!");
+            #ifdef SPDLOG_DEBUG
+            log->info("Autospeed success");
+            #endif
             return valid_timings[idx].speed;
         }
         else
         {
             currentTimingConfig = oldMode;
-            Serial.println(" FAILED.");
+            #ifdef SPDLOG_DEBUG
+            log->info("Autospeed failed");
+            #endif
         }
         idx++;
     }
-    Serial.println("None of the tested CAN speeds worked!");
+
+    #ifdef SPDLOG_DEBUG
+    log->info("Could not complete autospeed");
+    #endif
+
     disable();
     return 0;
 }
@@ -549,7 +576,10 @@ uint32_t CH32CAN::set_baudrate(uint32_t ul_baudrate)
         }
         idx++;
     }
-    printf("Could not find a valid bit timing! You will need to add your desired speed to the library!\n");
+
+    #ifdef SPDLOG_DEBUG
+    log->error("Invalid bit timing specified");
+    #endif
     return 0;
 }
 
@@ -588,7 +618,9 @@ void CH32CAN::enable()
     xTaskCreate(CAN_Rx_handler, "CAN_RX", 256, this, configMAX_PRIORITIES - 1, &CAN_Rx_handler_task);
     
     if (CAN_Init(CAN1, &CAN_InitStructure) != CAN_InitStatus_Success) {
-        printf("Failed to setup CAN\n");
+        #ifdef SPDLOG_DEBUG
+        log->info("Failed to setup CAN");
+        #endif
         return;
     }
     CAN_DBGFreeze(CAN1, DISABLE);
@@ -669,7 +701,10 @@ bool CH32CAN::processFrame(CAN_FRAME &frame, uint8_t filter_id)
         }
     }
 
-    if (debuggingMode) Serial.write('_');
+    #ifdef SPDLOG_DEBUG
+    SPDLOG_LOGGER_TRACE(log, FMT_STRING("Frame processed at filter {:x}"), (int) filter_id);
+    #endif
+
     return true;
 }
 
