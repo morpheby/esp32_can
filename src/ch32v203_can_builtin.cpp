@@ -59,6 +59,13 @@ static QueueHandle_t rx_queue;
 static QueueHandle_t tx_queue;
 static bool canNeedsBusReset = false;
 
+#if configSUPPORT_STATIC_ALLOCATION
+static StaticTask_t CAN_Rx_task;
+static StaticTask_t CAN_Tx_task;
+static StackType_t CAN_Rx_task_stack[128];
+static StackType_t CAN_Tx_task_stack[128];
+#endif
+
 static TaskHandle_t CAN_Rx_handler_task = NULL;
 static TaskHandle_t CAN_Tx_handler_task = NULL;
 
@@ -613,9 +620,16 @@ void CH32CAN::enable()
 
     rx_queue = xQueueCreate(rxBufferSize, sizeof(CAN_FRAME));
     tx_queue = xQueueCreate(txBufferSize, sizeof(CAN_FRAME));
-
+    
+    #if configSUPPORT_STATIC_ALLOCATION
+    CAN_Tx_handler_task = xTaskCreateStatic(CAN_Tx_handler, "CAN_TX", sizeof(CAN_Tx_task_stack) / sizeof(StackType_t),
+        this, configMAX_PRIORITIES - 1, CAN_Tx_task_stack, &CAN_Tx_task);
+    CAN_Rx_handler_task = xTaskCreateStatic(CAN_Rx_handler, "CAN_RX", sizeof(CAN_Tx_task_stack) / sizeof(StackType_t),
+        this, configMAX_PRIORITIES - 1, CAN_Rx_task_stack, &CAN_Rx_task);
+    #else
     xTaskCreate(CAN_Tx_handler, "CAN_TX", 128, this, configMAX_PRIORITIES - 1, &CAN_Tx_handler_task);
     xTaskCreate(CAN_Rx_handler, "CAN_RX", 256, this, configMAX_PRIORITIES - 1, &CAN_Rx_handler_task);
+    #endif
     
     if (CAN_Init(CAN1, &CAN_InitStructure) != CAN_InitStatus_Success) {
         #ifdef SPDLOG_DEBUG
