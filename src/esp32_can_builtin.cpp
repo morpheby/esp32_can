@@ -509,7 +509,7 @@ bool ESP32CAN::sendFrameSync(CAN_FRAME& txFrame, TickType_t waitTimeout) {
     return true;
 }
 
-bool ESP32CAN::sendFrame(CAN_FRAME& txFrame)
+bool ESP32CAN::sendFrame(const CAN_FRAME& txFrame)
 {
     twai_message_t __TX_frame;
 
