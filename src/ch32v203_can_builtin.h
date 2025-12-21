@@ -86,6 +86,10 @@ public:
 
   friend void CAN_Rx_handler(void *pvParameters);
   friend void CAN_Tx_handler(void *pvParameters);
+  
+  #if defined(CAN_RX_ON_MAIN_LOOP)
+  void loop();
+  #endif
 
 protected:
   bool readyForTraffic;

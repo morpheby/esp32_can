@@ -59,14 +59,19 @@ static QueueHandle_t rx_queue;
 static QueueHandle_t tx_queue;
 static bool canNeedsBusReset = false;
 
+
 #if configSUPPORT_STATIC_ALLOCATION
+#if !defined(CAN_RX_ON_MAIN_LOOP)
 static StaticTask_t CAN_Rx_task;
-static StaticTask_t CAN_Tx_task;
 static StackType_t CAN_Rx_task_stack[128];
+#endif
+static StaticTask_t CAN_Tx_task;
 static StackType_t CAN_Tx_task_stack[128];
 #endif
 
+#if !defined(CAN_RX_ON_MAIN_LOOP)
 static TaskHandle_t CAN_Rx_handler_task = NULL;
+#endif
 static TaskHandle_t CAN_Tx_handler_task = NULL;
 
 // static CanTxMsg mailboxMessages[3];
@@ -289,6 +294,14 @@ CH32CAN::CH32CAN() : CAN_COMMON(BI_NUM_FILTERS)
     cyclesSinceTraffic = 0;
 }
 
+#if defined(CAN_RX_ON_MAIN_LOOP)
+void CH32CAN::loop() {
+    const TickType_t xDelay = 0;
+    CAN_FRAME frame;
+
+    auto espCan = this;
+
+#else
 void CAN_Rx_handler(void *pvParameters)
 {
     CH32CAN* espCan = (CH32CAN*)pvParameters;
@@ -297,6 +310,7 @@ void CAN_Rx_handler(void *pvParameters)
 
     for(;;)
     {
+#endif
         if (xQueueReceive(rx_queue, &frame, xDelay) != pdTRUE) {
             espCan->cyclesSinceTraffic++;
             
@@ -345,11 +359,21 @@ void CAN_Rx_handler(void *pvParameters)
                 CAN_WakeUp(CAN1);
                 espCan->readyForTraffic = true;
             }
+#if defined(CAN_RX_ON_MAIN_LOOP)
+            return;
+#else
             continue;
+#endif
         }
         espCan->processFrame(frame, frame.fid);
+#if defined(CAN_RX_ON_MAIN_LOOP)
+    return;
+}
+#else
     }
 }
+#endif
+
 void CAN_Tx_handler(void *pvParameters)
 {
     // CH32CAN* espCan = (CH32CAN*)pvParameters;
@@ -621,15 +645,20 @@ void CH32CAN::enable()
     rx_queue = xQueueCreate(rxBufferSize, sizeof(CAN_FRAME));
     tx_queue = xQueueCreate(txBufferSize, sizeof(CAN_FRAME));
     
-    #if configSUPPORT_STATIC_ALLOCATION
+#if configSUPPORT_STATIC_ALLOCATION
     CAN_Tx_handler_task = xTaskCreateStatic(CAN_Tx_handler, "CAN_TX", sizeof(CAN_Tx_task_stack) / sizeof(StackType_t),
         this, configMAX_PRIORITIES - 1, CAN_Tx_task_stack, &CAN_Tx_task);
+
+#if !defined(CAN_RX_ON_MAIN_LOOP)
     CAN_Rx_handler_task = xTaskCreateStatic(CAN_Rx_handler, "CAN_RX", sizeof(CAN_Tx_task_stack) / sizeof(StackType_t),
         this, configMAX_PRIORITIES - 1, CAN_Rx_task_stack, &CAN_Rx_task);
-    #else
+#endif
+#else
     xTaskCreate(CAN_Tx_handler, "CAN_TX", 128, this, configMAX_PRIORITIES - 1, &CAN_Tx_handler_task);
+#if !defined(CAN_RX_ON_MAIN_LOOP)
     xTaskCreate(CAN_Rx_handler, "CAN_RX", 256, this, configMAX_PRIORITIES - 1, &CAN_Rx_handler_task);
-    #endif
+#endif
+#endif
     
     if (CAN_Init(CAN1, &CAN_InitStructure) != CAN_InitStatus_Success) {
         #ifdef SPDLOG_DEBUG
@@ -660,11 +689,13 @@ void CH32CAN::disable()
         vTaskDelete(CAN_Tx_handler_task);
         CAN_Tx_handler_task = NULL;
     }
+#if !defined(CAN_RX_ON_MAIN_LOOP)
     if (CAN_Rx_handler_task != NULL)
     {
         vTaskDelete(CAN_Rx_handler_task);
         CAN_Rx_handler_task = NULL;
     }
+#endif
 
     if (rx_queue) {
         vQueueDelete(rx_queue);
