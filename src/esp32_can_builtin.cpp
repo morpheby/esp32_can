@@ -455,33 +455,32 @@ bool ESP32CAN::processFrame(twai_message_t &frame)
                 xQueueSend(callbackQueue, &msg, 0);
                 return true;
             }
-            else if (cbGeneral)
+            
+            for (int listenerPos = 0; listenerPos < SIZE_LISTENERS; listenerPos++)
+            {
+                thisListener = listener[listenerPos];
+                if (thisListener != NULL)
+                {
+                    if (thisListener->isCallbackActive(i)) 
+                    {
+                        msg.fid = 0x80000000ul + (listenerPos << 24ul) + i;
+                        xQueueSend(callbackQueue, &msg, 0);
+                        return true;
+                    }
+                    else if (thisListener->isCallbackActive(numFilters)) //global catch-all 
+                    {
+                        msg.fid = 0x80000000ul + (listenerPos << 24ul) + 0xFF;
+                        xQueueSend(callbackQueue, &msg, 0);
+                        return true;
+                    }
+                }
+            }
+
+            if (cbGeneral)
             {
                 msg.fid = 0xFF;
                 xQueueSend(callbackQueue, &msg, 0);
                 return true;
-            }
-            else
-            {
-                for (int listenerPos = 0; listenerPos < SIZE_LISTENERS; listenerPos++)
-                {
-                    thisListener = listener[listenerPos];
-                    if (thisListener != NULL)
-                    {
-                        if (thisListener->isCallbackActive(i)) 
-				        {
-					        msg.fid = 0x80000000ul + (listenerPos << 24ul) + i;
-                            xQueueSend(callbackQueue, &msg, 0);
-                            return true;
-				        }
-				        else if (thisListener->isCallbackActive(numFilters)) //global catch-all 
-				        {
-                            msg.fid = 0x80000000ul + (listenerPos << 24ul) + 0xFF;
-					        xQueueSend(callbackQueue, &msg, 0);
-                            return true;
-				        }
-                    }
-                }
             }
             
             //otherwise, send frame to input queue
