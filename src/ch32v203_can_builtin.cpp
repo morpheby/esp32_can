@@ -722,28 +722,28 @@ bool CH32CAN::processFrame(CAN_FRAME &frame, uint8_t filter_id)
     {
         (*cbCANFrame[filter_id])(&frame);
     }
-    else if (cbGeneral)
+    
+    for (int listenerPos = 0; listenerPos < SIZE_LISTENERS; listenerPos++)
     {
-        (*cbGeneral)(&frame);
-    }
-    else
-    {
-        for (int listenerPos = 0; listenerPos < SIZE_LISTENERS; listenerPos++)
+        thisListener = listener[listenerPos];
+        if (thisListener != NULL)
         {
-            thisListener = listener[listenerPos];
-            if (thisListener != NULL)
+            if (thisListener->isCallbackActive(filter_id)) 
             {
-                if (thisListener->isCallbackActive(filter_id)) 
-                {
-                    thisListener->gotFrame(&frame, filter_id);
-                }
-                else if (thisListener->isCallbackActive(numFilters)) //global catch-all 
-                {
-                    thisListener->gotFrame(&frame, 0xFF);
-                    return true;
-                }
+                thisListener->gotFrame(&frame, filter_id);
+                return true;
+            }
+            else if (thisListener->isCallbackActive(numFilters)) //global catch-all 
+            {
+                thisListener->gotFrame(&frame, 0xFF);
+                return true;
             }
         }
+    }
+    
+    if (cbGeneral)
+    {
+        (*cbGeneral)(&frame);
     }
 
     #ifdef SPDLOG_DEBUG
