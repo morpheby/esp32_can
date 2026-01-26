@@ -14,7 +14,6 @@
 #if __has_include("spdlog/spdlog.h")
 #include "spdlog/spdlog.h"
 #define SPDLOG_DEBUG
-auto log = spdlog::get("CAN");
 #endif
 
 typedef struct
@@ -517,6 +516,14 @@ int CH32CAN::_setFilter(uint32_t id, uint32_t mask, bool extended)
 
 uint32_t CH32CAN::init(uint32_t ul_baudrate)
 {
+
+
+    #ifdef SPDLOG_DEBUG
+    auto log = spdlog::get("CAN");
+    if(log == nullptr)
+        log = spdlog::default_logger();
+    #endif
+
     GPIO_InitTypeDef      GPIO_InitStructure = {0};
 
     GPIO_InitStructure.GPIO_Pin = GPIO_Pin_12;
