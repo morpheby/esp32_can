@@ -116,15 +116,18 @@ ISR void USB_LP_CAN1_RX0_IRQHandler(void) {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
     if (rx_queue) {
-        while (CAN_MessagePending(CAN1, CAN_FIFO0) && !xQueueIsQueueFullFromISR(rx_queue)) {
+        while (CAN_MessagePending(CAN1, CAN_FIFO0)) {
             uint16_t timestamp = (CAN1->sFIFOMailBox[0].RXMDTR & CAN_RXMDT0R_TIME) >> 16;
             CAN_Receive(CAN1, CAN_FIFO0, &msg);
+            if (xQueueIsQueueFullFromISR(rx_queue)) {
+                break;
+            }
 
             CAN_FRAME frame;
             frame.id = (msg.IDE == CAN_Id_Extended) ? msg.ExtId : msg.StdId;
             frame.extended = msg.IDE == CAN_Id_Extended;
             frame.timestamp = timestamp;
-            frame.length = msg.DLC;
+            frame.length = std::min(msg.DLC, (uint8_t) 8);
             frame.rtr = msg.RTR == CAN_RTR_Remote;
             uint8_t filterGrpNum = 0;
             int filterNum = msg.FMI;
@@ -158,15 +161,18 @@ ISR void CAN1_RX1_IRQHandler(void) {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
     if (rx_queue) {
-        while (CAN_MessagePending(CAN1, CAN_FIFO1) && !xQueueIsQueueFullFromISR(rx_queue)) {
+        while (CAN_MessagePending(CAN1, CAN_FIFO1)) {
             uint16_t timestamp = (CAN1->sFIFOMailBox[1].RXMDTR & CAN_RXMDT1R_TIME) >> 16;
             CAN_Receive(CAN1, CAN_FIFO1, &msg);
+            if (xQueueIsQueueFullFromISR(rx_queue)) {
+                break;
+            }
 
             CAN_FRAME frame;
             frame.id = (msg.IDE == CAN_Id_Extended) ? msg.ExtId : msg.StdId;
             frame.extended = msg.IDE == CAN_Id_Extended;
             frame.timestamp = timestamp;
-            frame.length = msg.DLC;
+            frame.length = std::min(msg.DLC, (uint8_t) 8);
             frame.rtr = msg.RTR == CAN_RTR_Remote;
             uint8_t filterGrpNum = 0;
             int filterNum = msg.FMI;
