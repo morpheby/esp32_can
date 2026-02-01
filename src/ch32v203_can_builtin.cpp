@@ -23,7 +23,11 @@ typedef struct
 } VALID_TIMING;
 
 // FIXME: Hardcoded value
+#if defined(SYSCLK_FREQ_144MHz_HSI)
 #define CAN_CLOCK_FREQ (SYSCLK_FREQ_144MHz_HSI)/2
+#elif defined(SYSCLK_FREQ_120MHz_HSI)
+#define CAN_CLOCK_FREQ (SYSCLK_FREQ_120MHz_HSI)/2
+#endif
 
 #define CAN_BRP_FROM_RESOLUTION_HZ(freq) ((CAN_CLOCK_FREQ)/(freq))
 
