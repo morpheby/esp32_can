@@ -86,7 +86,7 @@ public:
   bool processFrame(twai_message_t &frame);
   void sendCallback(CAN_FRAME *frame);
 
-  bool sendFrameSync(CAN_FRAME& txFrame, portTickType waitTimeout);
+  bool sendFrameSync(CAN_FRAME& txFrame, TickType_t waitTimeout);
 
   void setCANPins(gpio_num_t rxPin, gpio_num_t txPin);
 

@@ -261,7 +261,7 @@ bool MCP2515::_init(uint32_t CAN_Bus_Speed, uint8_t Freq, uint8_t SJW, bool auto
   float freqMhz = Freq * 1000000.0;
   float bestMatchf = 10.0;
   int bestMatchIdx = 10;
-  float savedBT;
+  float savedBT = 0.0f;
 
   float speed = CAN_Bus_Speed;
   if (speed > 5000.0) speed *= 0.001;

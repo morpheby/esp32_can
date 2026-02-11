@@ -1,8 +1,11 @@
 #include "Arduino.h"
 #include <SPI.h>
+#include <esp32-hal-spi.h>
 #include "mcp2517fd.h"
 #include "mcp2517fd_defines.h"
 #include "mcp2517fd_regs.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 //20Mhz is the fastest we can go (because of the MCP2517/18 chip. The ESP32 or ESP32S3 can go much faster)
 #define FD_SPI_SPEED 10000000
@@ -68,7 +71,10 @@ void MCP2517FD::resetHardware()
     int idx;
     if (debuggingMode)
     {
-        printf("Diag0: %x\n     Diag1: %x     ErrFlgs: %x", getCIBDIAG0(), cachedDiag1, getErrorFlags());
+        printf("Diag0: %x\n     Diag1: %x     ErrFlgs: %x",
+            (unsigned int) getCIBDIAG0(),
+            (unsigned int) cachedDiag1,
+            (unsigned int)getErrorFlags());
     }
     cachedDiag1 = 0;
 
@@ -271,7 +277,7 @@ void MCP2517FD::initSPI()
     // Set up SPI Communication
     // dataMode can be SPI_MODE0 or SPI_MODE3 only for MCP2517FD
     SPI.begin(SCK, MISO, MOSI, SS);
-    SPI.setClockDivider(spiFrequencyToClockDiv(FD_SPI_SPEED));
+    SPI.setFrequency(FD_SPI_SPEED);
     SPI.setDataMode(SPI_MODE0);
     SPI.setBitOrder(MSBFIRST);
     SPI.setHwCs(false); //allow manual control of CS line
@@ -553,9 +559,9 @@ bool MCP2517FD::_init(uint32_t CAN_Bus_Speed, uint8_t Freq, uint8_t SJW, bool au
     if (debuggingMode)
     {
         debugVal = Read(ADDR_CiCON);
-        printf("CiCON: %x\n", debugVal);
+        printf("CiCON: %x\n", (unsigned int) debugVal);
         debugVal = Read(ADDR_CiNBTCFG);
-        printf("CiNBTCFG: %x\n", debugVal);
+        printf("CiNBTCFG: %x\n", (unsigned int) debugVal);
     }
 
     commonInit();
@@ -606,7 +612,7 @@ bool MCP2517FD::_init(uint32_t CAN_Bus_Speed, uint8_t Freq, uint8_t SJW, bool au
     {
         if (debuggingMode)
         {
-            printf("MCP2517 Init Failed. CiINT = %x", rtn);
+            printf("MCP2517 Init Failed. CiINT = %x", (unsigned int) rtn);
         }
         return false;
     }
@@ -1229,7 +1235,7 @@ void MCP2517FD::LoadFrameBuffer(uint16_t address, CAN_FRAME_FD &message)
     {
         Serial.write('_');
         uint32_t cnf = Read(ADDR_CiFIFOCON);
-        Serial.printf("FIFOCON: 0x%x\n", cnf);
+        Serial.printf("FIFOCON: 0x%x\n", (unsigned int) cnf);
     }
     
 }
