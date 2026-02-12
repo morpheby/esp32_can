@@ -36,10 +36,10 @@ class MCP2517FD : public CAN_COMMON
 	uint16_t available() override; //like rx_avail but returns the number of waiting frames
 	uint32_t get_rx_buff(CAN_FRAME &msg) override;
 	//special FD functions required to reimplement to support FD mode
-	uint32_t get_rx_buffFD(CAN_FRAME_FD &msg);
-    uint32_t set_baudrateFD(uint32_t nominalSpeed, uint32_t dataSpeed);
-    bool sendFrameFD(CAN_FRAME_FD& txFrame);
-    uint32_t initFD(uint32_t nominalRate, uint32_t dataRate);
+	uint32_t get_rx_buffFD(CAN_FRAME_FD &msg) override;
+    uint32_t set_baudrateFD(uint32_t nominalSpeed, uint32_t dataSpeed) override;
+    bool sendFrameFD(CAN_FRAME_FD& txFrame) override;
+    uint32_t initFD(uint32_t nominalRate, uint32_t dataRate) override;
 	
 	// Basic MCP2517FD SPI Command Set
     void Reset();
