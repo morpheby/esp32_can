@@ -495,9 +495,10 @@ void MCP2515::disable()
     Mode(MODE_CONFIG); //should knock it off the CAN bus and keep it from doing anything
 }
 
-bool MCP2515::sendFrame(CAN_FRAME& txFrame)
+bool MCP2515::sendFrame(const CAN_FRAME& txFrame)
 {
-    EnqueueTX(txFrame);
+    CAN_FRAME frame = txFrame;
+    EnqueueTX(frame);
     return true;
 }
 

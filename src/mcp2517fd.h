@@ -22,19 +22,19 @@ class MCP2517FD : public CAN_COMMON
 	int InitFD(uint32_t nominalBaud, uint32_t dataBaud, uint8_t freq);
 
     //block of functions which must be overriden from CAN_COMMON to implement functionality for this hardware
-	int _setFilterSpecific(uint8_t mailbox, uint32_t id, uint32_t mask, bool extended);
-    int _setFilter(uint32_t id, uint32_t mask, bool extended);
+	int _setFilterSpecific(uint8_t mailbox, uint32_t id, uint32_t mask, bool extended) override;
+    int _setFilter(uint32_t id, uint32_t mask, bool extended) override;
 	void resetHardware();
-	uint32_t init(uint32_t ul_baudrate);
-    uint32_t beginAutoSpeed();
-    uint32_t set_baudrate(uint32_t ul_baudrate);
-    void setListenOnlyMode(bool state);
-	void enable();
-	void disable();
-	bool sendFrame(CAN_FRAME& txFrame);
-	bool rx_avail();
-	uint16_t available(); //like rx_avail but returns the number of waiting frames
-	uint32_t get_rx_buff(CAN_FRAME &msg);
+	uint32_t init(uint32_t ul_baudrate) override;
+    uint32_t beginAutoSpeed() override;
+    uint32_t set_baudrate(uint32_t ul_baudrate) override;
+    void setListenOnlyMode(bool state) override;
+	void enable() override;
+	void disable() override;
+	bool sendFrame(const CAN_FRAME& txFrame) override;
+	bool rx_avail() override;
+	uint16_t available() override; //like rx_avail but returns the number of waiting frames
+	uint32_t get_rx_buff(CAN_FRAME &msg) override;
 	//special FD functions required to reimplement to support FD mode
 	uint32_t get_rx_buffFD(CAN_FRAME_FD &msg);
     uint32_t set_baudrateFD(uint32_t nominalSpeed, uint32_t dataSpeed);

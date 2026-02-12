@@ -856,9 +856,10 @@ void MCP2517FD::disable()
     Mode(CAN_CONFIGURATION_MODE);
 }
 
-bool MCP2517FD::sendFrame(CAN_FRAME& txFrame)
+bool MCP2517FD::sendFrame(const CAN_FRAME& txFrame)
 {
-    EnqueueTX(txFrame);
+    CAN_FRAME frame = txFrame;
+    EnqueueTX(frame);
     return true;
 }
 
