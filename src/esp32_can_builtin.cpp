@@ -35,14 +35,15 @@ static EventGroupHandle_t busState_eventGroup = NULL;
 //as it serves as a terminator
 static const VALID_TIMING valid_timings[] = 
 {
-    {TWAI_TIMING_CONFIG_1MBITS(), 1000000},
-    {TWAI_TIMING_CONFIG_500KBITS(), 500000},
-    {TWAI_TIMING_CONFIG_250KBITS(), 250000},
-    {TWAI_TIMING_CONFIG_125KBITS(), 125000},
-    {TWAI_TIMING_CONFIG_800KBITS(), 800000},
-    {TWAI_TIMING_CONFIG_100KBITS(), 100000},
-    {TWAI_TIMING_CONFIG_50KBITS(), 50000},
-    {TWAI_TIMING_CONFIG_25KBITS(), 25000},
+    {{.clk_src = TWAI_CLK_SRC_DEFAULT, .quanta_resolution_hz = 16'000'000, .brp = 0, .prop_seg = 0, .tseg_1 = 11, .tseg_2 = 4, .sjw = 3, .triple_sampling = false}, 1000000},
+    {{.clk_src = TWAI_CLK_SRC_DEFAULT, .quanta_resolution_hz = 16'000'000, .brp = 0, .prop_seg = 0, .tseg_1 = 14, .tseg_2 = 5, .sjw = 3, .triple_sampling = false}, 800000},
+    {{.clk_src = TWAI_CLK_SRC_DEFAULT, .quanta_resolution_hz =  5'000'000, .brp = 0, .prop_seg = 0, .tseg_1 =  7, .tseg_2 = 2, .sjw = 2, .triple_sampling = false}, 500000},
+    {{.clk_src = TWAI_CLK_SRC_DEFAULT, .quanta_resolution_hz =  4'000'000, .brp = 0, .prop_seg = 0, .tseg_1 = 13, .tseg_2 = 2, .sjw = 1, .triple_sampling = false}, 250000},
+    {{.clk_src = TWAI_CLK_SRC_DEFAULT, .quanta_resolution_hz =  2'000'000, .brp = 0, .prop_seg = 0, .tseg_1 = 13, .tseg_2 = 2, .sjw = 1, .triple_sampling = false}, 125000},
+    {{.clk_src = TWAI_CLK_SRC_DEFAULT, .quanta_resolution_hz =  1'600'000, .brp = 0, .prop_seg = 0, .tseg_1 = 13, .tseg_2 = 2, .sjw = 1, .triple_sampling = false}, 100000},
+    {{.clk_src = TWAI_CLK_SRC_DEFAULT, .quanta_resolution_hz =    800'000, .brp = 0, .prop_seg = 0, .tseg_1 = 13, .tseg_2 = 2, .sjw = 1, .triple_sampling = false}, 50000},
+    {{.clk_src = TWAI_CLK_SRC_DEFAULT, .quanta_resolution_hz =    320'000, .brp = 0, .prop_seg = 0, .tseg_1 = 13, .tseg_2 = 2, .sjw = 1, .triple_sampling = false}, 20000},
+
     //caution, these next entries are custom and haven't really been fully tested yet.
     //Note that brp can take values in multiples of 2 up to 128 and multiples of 4 up to 256
     //TSEG1 can be 1 to 16 and TSEG2 can be 1 to 8. There is a silent +1 added to the sum of these two.
@@ -50,7 +51,6 @@ static const VALID_TIMING valid_timings[] =
     {{.brp = 100, .tseg_1 = 7, .tseg_2 = 2, .sjw = 3, .triple_sampling = false}, 80000}, 
     {{.brp = 120, .tseg_1 = 15, .tseg_2 = 4, .sjw = 3, .triple_sampling = false}, 33333},
     //this one is only possible on ECO2 ESP32 or ESP32-S3 not on the older ESP32 chips
-    {{.brp = 200, .tseg_1 = 15, .tseg_2 = 4, .sjw = 3, .triple_sampling = false}, 20000},
     {TWAI_TIMING_CONFIG_25KBITS(), 0} //this is a terminator record. When the code sees an entry with 0 speed it stops searching
 };
 
