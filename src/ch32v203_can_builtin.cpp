@@ -9,7 +9,7 @@
 
 #include "Arduino.h"
 #include "ch32v203_can_builtin.h"
-#include "ch32v20x_can.h"
+#include "ch32yyxx_can.h"
 
 #if __has_include("spdlog/spdlog.h")
 #include "spdlog/spdlog.h"
@@ -23,10 +23,10 @@ typedef struct
 } VALID_TIMING;
 
 // FIXME: Hardcoded value
-#if defined(SYSCLK_FREQ_144MHz_HSI)
-#define CAN_CLOCK_FREQ (SYSCLK_FREQ_144MHz_HSI)/2
-#elif defined(SYSCLK_FREQ_120MHz_HSI)
-#define CAN_CLOCK_FREQ (SYSCLK_FREQ_120MHz_HSI)/2
+#if CH32_SYSCLK_FREQ_HZ == 144'000'000
+#define CAN_CLOCK_FREQ (CH32_SYSCLK_FREQ_HZ)/2
+#elif CH32_SYSCLK_FREQ_HZ == 120'000'000
+#define CAN_CLOCK_FREQ (CH32_SYSCLK_FREQ_HZ)/2
 #endif
 
 #define CAN_BRP_FROM_RESOLUTION_HZ(freq) ((CAN_CLOCK_FREQ)/(freq))
