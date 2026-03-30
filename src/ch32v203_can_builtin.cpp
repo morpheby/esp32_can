@@ -35,7 +35,7 @@ typedef struct
 
 #define CAN_TIMING_CONFIG_NULL      CAN_TIMING_CONFIG(CAN_CLOCK_FREQ, 1, 1, 1)
 
-#if defined(SYSCLK_FREQ_144MHz_HSI)
+#if CH32_SYSCLK_FREQ_HZ == 144'000'000
 
 #if CAN_BRP_FROM_RESOLUTION_HZ(16000) < 1024
 // NOTE: Configuration not tested and not even calculated. Consider using bitcalc or other software to adjust
@@ -60,7 +60,7 @@ typedef struct
 #define CAN_TIMING_CONFIG_800KBITS      CAN_TIMING_CONFIG(16'000'000, 14, 5, 3)
 #define CAN_TIMING_CONFIG_1MBITS        CAN_TIMING_CONFIG(16'000'000, 11, 4, 3)
 
-#elif defined(SYSCLK_FREQ_120MHz_HSI)
+#elif CH32_SYSCLK_FREQ_HZ == 120'000'000
 
 #if CAN_BRP_FROM_RESOLUTION_HZ(16000) < 1024
 // NOTE: Configuration not tested and not even calculated. Consider using bitcalc or other software to adjust
