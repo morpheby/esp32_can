@@ -8,6 +8,7 @@
 */
 
 #include "Arduino.h"
+#include "ch32vxxx/ch32vxxx_isr.h"
 #include "ch32v203_can_builtin.h"
 #include "ch32yyxx_can.h"
 
@@ -140,9 +141,7 @@ static void frameToMsg(CanTxMsg *msg, const CAN_FRAME *frame) {
 
 // CAN doesn't work with USB, unless you have remap available. CH32V203K8T6 doesn't, so can't really test this.
 
-extern "C" {
-
-ISR void USB_LP_CAN1_RX0_IRQHandler(void) {
+_ISR_DEF(USB_LP_CAN1_RX0_IRQHandler) {
     // CAN FIFO0
     static CanRxMsg msg;
 
@@ -187,7 +186,7 @@ ISR void USB_LP_CAN1_RX0_IRQHandler(void) {
     CAN_ClearITPendingBit(CAN1,  CAN_IT_FMP0 | CAN_IT_FF0 | CAN_IT_FOV0);
 }
 
-ISR void CAN1_RX1_IRQHandler(void) {
+_ISR_DEF(CAN1_RX1_IRQHandler) {
     // CAN FIFO1
     static CanRxMsg msg;
 
@@ -232,7 +231,7 @@ ISR void CAN1_RX1_IRQHandler(void) {
     CAN_ClearITPendingBit(CAN1,  CAN_IT_FMP1 | CAN_IT_FF1 | CAN_IT_FOV1);
 }
 
-ISR void USB_HP_CAN1_TX_IRQHandler(void) {
+_ISR_DEF(USB_HP_CAN1_TX_IRQHandler) {
     // CAN TX
     // Find an empty mailbox or a mailbox with a failure
     // CanTxMsg mailboxMessages_new[3];
@@ -299,7 +298,7 @@ ISR void USB_HP_CAN1_TX_IRQHandler(void) {
     CAN_ClearITPendingBit(CAN1,  CAN_IT_TME);
 }
 
-ISR void CAN1_SCE_IRQHandler(void) {
+_ISR_DEF(CAN1_SCE_IRQHandler) {
     // CAN Error
     if (CAN_GetFlagStatus(CAN1, CAN_FLAG_BOF) == SET) {
         canNeedsBusReset = true;
@@ -313,8 +312,6 @@ ISR void CAN1_SCE_IRQHandler(void) {
 
     CAN_ClearFlag(CAN1, CAN_FLAG_EWG | CAN_FLAG_EPV | CAN_FLAG_BOF | CAN_FLAG_LEC | CAN_FLAG_SLAK);
     CAN_ClearITPendingBit(CAN1,  CAN_IT_EWG | CAN_IT_EPV | CAN_IT_BOF | CAN_IT_LEC | CAN_IT_ERR | CAN_IT_WKU | CAN_IT_SLK);
-}
-
 }
 
 #endif
