@@ -682,12 +682,12 @@ typedef union _REG_IOCON {
 typedef union _REG_CRC {
 
     struct {
-        uint32_t CRC : 16;
-        uint32_t CRCERRIF : 1;
-        uint32_t FERRIF : 1;
+        uint32_t crc : 16;
+        uint32_t crcErrIf : 1;
+        uint32_t ferrIf : 1;
         uint32_t unimplemented1 : 6;
-        uint32_t CRCERRIE : 1;
-        uint32_t FERRIE : 1;
+        uint32_t crcErrIe : 1;
+        uint32_t ferrIe : 1;
         uint32_t unimplemented2 : 6;
     } bF;
     uint32_t word;

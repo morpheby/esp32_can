@@ -1,11 +1,11 @@
 #include "Arduino.h"
 #include <SPI.h>
-#include <esp32-hal-spi.h>
+// #include <esp32-hal-spi.h>
 #include "mcp2517fd.h"
 #include "mcp2517fd_defines.h"
 #include "mcp2517fd_regs.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#include "freertos_inc.h"
+#include "port.h"
 
 //20Mhz is the fastest we can go (because of the MCP2517/18 chip. The ESP32 or ESP32S3 can go much faster)
 #define FD_SPI_SPEED 10000000
@@ -276,11 +276,15 @@ void MCP2517FD::initSPI()
 {
     // Set up SPI Communication
     // dataMode can be SPI_MODE0 or SPI_MODE3 only for MCP2517FD
-    SPI.begin(SCK, MISO, MOSI, SS);
-    SPI.setFrequency(FD_SPI_SPEED);
+    #if defined(CH32_MCU_FAMILY)
+        SPI.begin(SS);
+    #else
+        SPI.begin(SCK, MISO, MOSI, SS);
+        SPI.setFrequency(FD_SPI_SPEED);
+        SPI.setHwCs(false); //allow manual control of CS line
+    #endif
     SPI.setDataMode(SPI_MODE0);
     SPI.setBitOrder(MSBFIRST);
-    SPI.setHwCs(false); //allow manual control of CS line
     if (debuggingMode) Serial.println("MCP2517FD SPI Inited");
 }
 
@@ -950,7 +954,11 @@ void MCP2517FD::Reset() {
     buf[1] = CMD_RESET;
     SPI.beginTransaction(fdSPISettings);
     digitalWrite(_CS,LOW);
+    #if defined(CH32_MCU_FAMILY)
+    SPI.transfer(buf, 2);
+    #else
     SPI.writeBytes(buf, 2);
+    #endif
     digitalWrite(_CS,HIGH);
     SPI.endTransaction();
 }
@@ -963,7 +971,11 @@ uint32_t MCP2517FD::Read(uint16_t address) {
     out_buf[2] = out_buf[3] = out_buf[4] = out_buf[5] = 0;
     SPI.beginTransaction(fdSPISettings);
     digitalWrite(_CS,LOW);
+    #if defined(CH32_MCU_FAMILY)
+    SPI.transfer(out_buf, in_buff, 6);
+    #else
     SPI.transferBytes(out_buf, in_buff, 6);
+    #endif
     digitalWrite(_CS,HIGH);
     SPI.endTransaction();
 
@@ -981,7 +993,11 @@ uint8_t MCP2517FD::Read8(uint16_t address)
 
     SPI.beginTransaction(fdSPISettings);
     digitalWrite(_CS,LOW);
+    #if defined(CH32_MCU_FAMILY)
+    SPI.transfer(out_buff, in_buff, 3);
+    #else
     SPI.transferBytes(out_buff, in_buff, 3);
+    #endif
     digitalWrite(_CS,HIGH);
     SPI.endTransaction();
     return in_buff[2];
@@ -997,7 +1013,11 @@ uint16_t MCP2517FD::Read16(uint16_t address)
 
     SPI.beginTransaction(fdSPISettings);
     digitalWrite(_CS,LOW);
+    #if defined(CH32_MCU_FAMILY)
+    SPI.transfer(out_buff, in_buff, 4);
+    #else
     SPI.transferBytes(out_buff, in_buff, 4);
+    #endif
     digitalWrite(_CS,HIGH);
     SPI.endTransaction();
     return *((uint16_t *)(in_buff + 2));
@@ -1014,7 +1034,11 @@ void MCP2517FD::Read(uint16_t address, uint8_t data[], uint16_t bytes) {
     // allows for sequential reading of registers starting at address - see data sheet
     SPI.beginTransaction(fdSPISettings);
     digitalWrite(_CS,LOW);
+    #if defined(CH32_MCU_FAMILY)
+    SPI.transfer(out_buff, in_buff, bytes + 2);
+    #else
     SPI.transferBytes(out_buff, in_buff, bytes + 2); //read only operation
+    #endif
     digitalWrite(_CS,HIGH);
     SPI.endTransaction();
     memcpy(data, (in_buff + 2), bytes);
@@ -1037,7 +1061,11 @@ uint32_t MCP2517FD::ReadFrameBuffer(uint16_t address, CAN_FRAME_FD &message) {
     //read enough of the RAM to get an 8 byte message. 
     //Then we check to see if we really need to read more.
     //This prevents having to read 64 data bytes if we were just receiving normal frames.
+    #if defined(CH32_MCU_FAMILY)
+    SPI.transfer(out_buff, in_buff, 22);
+    #else
     SPI.transferBytes(out_buff, in_buff, 22);
+    #endif
     message.length = ptr_buff[1] & 0xF;
     switch (message.length)
     {
@@ -1064,7 +1092,13 @@ uint32_t MCP2517FD::ReadFrameBuffer(uint16_t address, CAN_FRAME_FD &message) {
         break;
     }
     int neededBytes = message.length - 8;
-    if (neededBytes > 0) SPI.transferBytes(&out_buff[22], &in_buff[22], neededBytes);
+    if (neededBytes > 0) {
+        #if defined(CH32_MCU_FAMILY)
+        SPI.transfer(&out_buff[22], &in_buff[22], neededBytes);
+        #else
+        SPI.transferBytes(&out_buff[22], &in_buff[22], neededBytes);
+        #endif
+    }
     digitalWrite(_CS,HIGH);
     SPI.endTransaction();
   /*message in RAM is as follows:
@@ -1107,7 +1141,11 @@ void MCP2517FD::Write8(uint16_t address, uint8_t data) {
     buf[2] = data;
     SPI.beginTransaction(fdSPISettings);
     digitalWrite(_CS,LOW);
+    #if defined(CH32_MCU_FAMILY)
+    SPI.transfer(buf, buf, 3);
+    #else
     SPI.writeBytes(buf, 3);
+    #endif
     digitalWrite(_CS,HIGH);
     SPI.endTransaction();
     //taskENABLE_INTERRUPTS();
@@ -1122,7 +1160,11 @@ void MCP2517FD::Write16(uint16_t address, uint16_t data) {
     buf[3] = (data >> 8) & 0xFF;
     SPI.beginTransaction(fdSPISettings);
     digitalWrite(_CS,LOW);
+    #if defined(CH32_MCU_FAMILY)
+    SPI.transfer(buf, buf, 4);
+    #else
     SPI.writeBytes(buf, 4);
+    #endif
     digitalWrite(_CS,HIGH);
     SPI.endTransaction();
     //taskENABLE_INTERRUPTS();
@@ -1139,7 +1181,11 @@ void MCP2517FD::Write(uint16_t address, uint32_t data) {
     buf[5] = (data >> 24) & 0xFF;
     SPI.beginTransaction(fdSPISettings);
     digitalWrite(_CS,LOW);
+    #if defined(CH32_MCU_FAMILY)
+    SPI.transfer(buf, buf, 6);
+    #else
     SPI.writeBytes(buf, 6);
+    #endif
     digitalWrite(_CS,HIGH);
     SPI.endTransaction();
     //taskENABLE_INTERRUPTS();
@@ -1153,7 +1199,11 @@ void MCP2517FD::Write(uint16_t address, uint8_t data[], uint16_t bytes) {
     digitalWrite(_CS,LOW);
     SPI.transfer((CMD_WRITE << 4) | ((address >> 8) & 0xF) );
     SPI.transfer(address & 0xFF);
+    #if defined(CH32_MCU_FAMILY)
+    SPI.transfer(data, data, bytes);
+    #else
     SPI.writeBytes(data, bytes);
+    #endif
     digitalWrite(_CS,HIGH);
     SPI.endTransaction();
     //taskENABLE_INTERRUPTS();
@@ -1227,7 +1277,12 @@ void MCP2517FD::LoadFrameBuffer(uint16_t address, CAN_FRAME_FD &message)
     //taskDISABLE_INTERRUPTS();
     SPI.beginTransaction(fdSPISettings);
     digitalWrite(_CS,LOW);
-    SPI.writeBytes((uint8_t *) &buffer[0], 10 + (copyWords * 4)); //and only write just as many bytes as we need to for this frame
+    //and only write just as many bytes as we need to for this frame
+    #if defined(CH32_MCU_FAMILY)
+    SPI.transfer((uint8_t *) &buffer[0], (uint8_t *) &buffer[0], 10 + (copyWords * 4));
+    #else
+    SPI.writeBytes((uint8_t *) &buffer[0], 10 + (copyWords * 4));
+    #endif
     digitalWrite(_CS,HIGH);
     SPI.endTransaction();
     //taskENABLE_INTERRUPTS();

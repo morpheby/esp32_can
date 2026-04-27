@@ -1,0 +1,16 @@
+
+#cmakedefine01 CAN_FREERTOS_ESP_STYLE
+
+#if CAN_FREERTOS_ESP_STYLE
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/queue.h"
+
+#else
+
+#include "FreeRTOS.h"
+#include "task.h"
+#include "queue.h"
+
+#endif

@@ -32,7 +32,8 @@
 #include "SPI.h"
 #include "mcp2515.h"
 #include "mcp2515_defs.h"
-#include "esp32_can.h"
+#include "portmacro.h"
+#include "port.h"
 
 SPISettings mcpSPISettings(8000000, MSBFIRST, SPI_MODE0);
 
@@ -43,7 +44,7 @@ QueueHandle_t	callbackQueueM15;
 void MCP_INTHandler() {
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
   vTaskNotifyGiveFromISR(intDelegateTask, &xHigherPriorityTaskWoken); //send notice to the handler task that it can do the SPI transaction now
-  if (xHigherPriorityTaskWoken == pdTRUE) portYIELD_FROM_ISR(); //if vTaskNotify will wake the task (and it should) then yield directly to that task now
+  portEND_SWITCHING_ISR(xHigherPriorityTaskWoken); //if vTaskNotify will wake the task (and it should) then yield directly to that task now
 }
 
 /*
@@ -236,8 +237,11 @@ int MCP2515::Init(uint32_t CAN_Bus_Speed, uint8_t Freq, uint8_t SJW) {
 }
 
 bool MCP2515::_init(uint32_t CAN_Bus_Speed, uint8_t Freq, uint8_t SJW, bool autoBaud) {
-
-  SPI.begin(SCK, MISO, MOSI, SS);       //Set up Serial Peripheral Interface Port for CAN2
+  #if defined(CH32_MCU_FAMILY)
+    SPI.begin(SS);
+  #else
+    SPI.begin(SCK, MISO, MOSI, SS);       //Set up Serial Peripheral Interface Port for CAN2
+  #endif
   SPI.setClockDivider(SPI_CLOCK_DIV32);
   SPI.setDataMode(SPI_MODE0);
   SPI.setBitOrder(MSBFIRST);

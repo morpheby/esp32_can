@@ -33,9 +33,7 @@
 
 #include "Arduino.h"
 #include <can_common.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/queue.h"
+#include "freertos_inc.h"
 #include "driver/gpio.h"
 #include "esp_system.h"
 #include "driver/twai.h"
