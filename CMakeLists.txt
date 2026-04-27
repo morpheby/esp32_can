@@ -45,8 +45,4 @@ set(CAN_RX_ON_MAIN_LOOP OFF CACHE BOOL "Use main loop instead of a separate task
 
 target_include_directories(esp32_can PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_BINARY_DIR}")
 
-if(CAN_RX_ON_MAIN_LOOP)
-    target_compile_definitions(esp32_can PUBLIC CAN_RX_ON_MAIN_LOOP)
-endif()
-
 target_link_libraries(esp32_can PUBLIC can_common)
