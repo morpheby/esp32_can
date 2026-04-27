@@ -520,7 +520,7 @@ bool MCP2517FD::_init(uint32_t CAN_Bus_Speed, uint8_t Freq, uint8_t SJW, bool au
     */
     // Set registers
     nominalCfg.bF.SJW = SJW;
-    tseg1 = (unsigned int)(((float)Freq / 4.0) * 3.0) - 1;
+    tseg1 = (unsigned int)(((float)Freq / 4.0f) * 3.0f) - 1;
     tseg2 = Freq - tseg1 - 1;
     nominalCfg.bF.TSEG1 = tseg1 - 1; //registers store value one less than actual
     nominalCfg.bF.TSEG2 = tseg2 - 1;

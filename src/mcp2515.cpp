@@ -268,13 +268,13 @@ bool MCP2515::_init(uint32_t CAN_Bus_Speed, uint8_t Freq, uint8_t SJW, bool auto
   float savedBT = 0.0f;
 
   float speed = CAN_Bus_Speed;
-  if (speed > 5000.0) speed *= 0.001;
+  if (speed > 5000.0f) speed *= 0.001f;
 
-  float NBT = 1.0 / (speed * 1000.0); // Nominal Bit Time - How long a single CAN bit should take
+  float NBT = 1.0f / (speed * 1000.0f); // Nominal Bit Time - How long a single CAN bit should take
 
   //Now try each divisor to see which can most closely match the target.
   for(BRP=0; BRP < 63; BRP++) {
-    TQ = 2.0 * (float)(BRP + 1) / (float)freqMhz;
+    TQ = 2.0f * (float)(BRP + 1) / (float)freqMhz;
     tempBT = NBT / TQ;
 #ifdef DEBUG_SETUP
     SerialUSB.print("BRP: ");
