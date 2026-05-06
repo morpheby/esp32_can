@@ -381,7 +381,7 @@ uint16_t MCP2515::available()
 int MCP2515::_setFilter(uint32_t id, uint32_t mask, bool extended)
 {
     uint32_t filterVal;
-    boolean isExtended;
+    bool isExtended;
 
     for (int i = 0; i < 6; i++)
     {
@@ -825,29 +825,29 @@ void MCP2515::SetRXFilter(uint8_t filter, uint32_t FilterValue, bool ext) {
 	Mode(oldMode);
 }
 
-void MCP2515::GetRXFilter(uint8_t filter, uint32_t &filterVal, boolean &isExtended)
+void MCP2515::GetRXFilter(uint8_t filter, uint32_t &filterVal, bool &isExtended)
 {
-    uint8_t temp_buff[4];
+  uint8_t temp_buff[4];
 	uint8_t oldMode;
 		
 	oldMode = Read(CANSTAT);
 
 	Mode(MODE_CONFIG); //have to be in config mode to change mask
 
-    Read(filter, temp_buff, 4);
+  Read(filter, temp_buff, 4);
 
-    //these 11 bits are used either way and stored the same way either way
-    filterVal = temp_buff[0] << 3;
-    filterVal |= temp_buff[1] >> 5;
-    isExtended = false;
+  //these 11 bits are used either way and stored the same way either way
+  filterVal = temp_buff[0] << 3;
+  filterVal |= temp_buff[1] >> 5;
+  isExtended = false;
 
-    if (temp_buff[1] & 0b00001000) //extended / 29 bit filter - get the remaining 18 bits we need
-    {
-        isExtended = true;
-        filterVal |= (temp_buff[1] & 3) << 27;
-        filterVal |= temp_buff[2] << 19;
-        filterVal |= temp_buff[3] << 11;
-    }
+  if (temp_buff[1] & 0b00001000) //extended / 29 bit filter - get the remaining 18 bits we need
+  {
+      isExtended = true;
+      filterVal |= (temp_buff[1] & 3) << 27;
+      filterVal |= temp_buff[2] << 19;
+      filterVal |= temp_buff[3] << 11;
+  }
 
 	Mode(oldMode);
 }
@@ -883,10 +883,8 @@ void MCP2515::EnqueueRX(CAN_FRAME& newFrame) {
 //it will place it into hardware immediately instead of using
 //the software queue
 void MCP2515::EnqueueTX(CAN_FRAME& newFrame) {
-  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
   xQueueSend(txQueue, &newFrame, 0);
-  xHigherPriorityTaskWoken = xTaskNotifyGive(intDelegateTask); //send notice to the handler task that it can do the SPI transaction now
-  //if (xHigherPriorityTaskWoken == pdTRUE) 
+  xTaskNotifyGive(intDelegateTask); //send notice to the handler task that it can do the SPI transaction now
 }
 
 bool MCP2515::GetRXFrame(CAN_FRAME &frame) {

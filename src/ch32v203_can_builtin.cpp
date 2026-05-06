@@ -243,7 +243,7 @@ _ISR_DEF(USB_HP_CAN1_TX_IRQHandler) {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
     if (tx_queue) {
-        for (int i = 0, j = 0; i < 3; ++i) {
+        for (int i = 0; i < 3; ++i) {
             switch (CAN_TransmitStatus(CAN1, i)) {
             case CAN_TxStatus_Pending:
                 // This one is full, ignore it

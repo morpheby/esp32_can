@@ -1193,7 +1193,6 @@ void MCP2517FD::Write(uint16_t address, uint32_t data) {
 
 void MCP2517FD::Write(uint16_t address, uint8_t data[], uint16_t bytes) {
     // allows for sequential writing of registers starting at address - see data sheet
-    uint8_t i;
     //taskDISABLE_INTERRUPTS();
     SPI.beginTransaction(fdSPISettings);
     digitalWrite(_CS,LOW);
@@ -1377,7 +1376,6 @@ bool MCP2517FD::GetRXFrame(CAN_FRAME &frame) {
 void MCP2517FD::intHandler(void) {
     CAN_FRAME_FD messageFD;
     CAN_FRAME message;
-    uint32_t ctrlVal;
     uint32_t status;
     uint16_t addr;
     uint32_t filtHit;
@@ -1549,6 +1547,8 @@ void MCP2517FD::handleTXFifo(int fifo, CAN_FRAME_FD &newFrame)
 {
     uint32_t status;
     uint16_t addr;
+    (void) status;
+    (void) addr;
     //BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
     if (fifo < 0) return;
@@ -1585,8 +1585,6 @@ void MCP2517FD::handleTXFifo(int fifo, CAN_FRAME_FD &newFrame)
 
 void MCP2517FD::handleTXFifo(int fifo, CAN_FRAME &newFrame)
 {
-    uint32_t status;
-    uint16_t addr;
     CAN_FRAME_FD fd;
     BaseType_t ret;
 
