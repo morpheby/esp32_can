@@ -2,12 +2,12 @@
 #pragma once
 
 #include "Arduino.h"
-#include "WInterrupts.h"
-#include "ch32v30x_gpio.h"
-#include "wiring_constants.h"
 #include "freertos_inc.h"
 
 #if defined(CH32_MCU_FAMILY)
+
+#include "wiring_constants.h"
+#include "ch32yyxx_gpio.h"
 
 inline void attachInterrupt(uint8_t pin, void (*userFunc)(void), int mode) {
     EXTITrigger_TypeDef m = mode == RISING ? EXTI_Trigger_Rising :
@@ -25,5 +25,7 @@ BaseType_t xTaskCreatePinnedToCore(TaskFunction_t pxTaskCode, const char *const 
 #define IRAM_ATTR
 
 #else
+
+#define portEND_SWITCHING_ISR(x) portYIELD_FROM_ISR(x)
 
 #endif
