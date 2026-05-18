@@ -373,7 +373,7 @@ void ESP32CAN::enable()
     }
 
     if (!CAN_WatchDog_Builtin_handler) {
-        xTaskCreatePinnedToCore(&CAN_WatchDog_Builtin, "CAN_WD_BI", 2048, this, 10, &CAN_WatchDog_Builtin_handler, SOC_CPU_CORES_NUM - 1);
+        xTaskCreatePinnedToCore(&CAN_WatchDog_Builtin, "CAN_WD_BI", 4096, this, 10, &CAN_WatchDog_Builtin_handler, SOC_CPU_CORES_NUM - 1);
     }
 
     callbackQueue = xQueueCreate(16, sizeof(CAN_FRAME));
