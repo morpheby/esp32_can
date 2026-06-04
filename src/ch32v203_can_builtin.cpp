@@ -390,6 +390,11 @@ void CAN_Rx_handler(void *pvParameters)
                     #endif
                     return;
                 }
+                CAN_SlaveStartBank(28);
+                CAN1->FCTLR |= 0x1;
+                CAN1->FWR &= ~(uint32_t)0x1;
+                CAN1->FCTLR &= ~(uint32_t)0x1;
+                
                 CAN_DBGFreeze(CAN1, DISABLE);
                 CAN_WakeUp(CAN1);
                 espCan->readyForTraffic = true;
@@ -709,9 +714,14 @@ void CH32CAN::enable()
         #endif
         return;
     }
+    CAN_SlaveStartBank(28);         // all 28 banks belong to CAN1
+    CAN1->FCTLR |= 0x1;             // enter filter init mode
+    CAN1->FWR = 0;                  // deactivate every bank (incl. catch-all 0)
+    CAN1->FCTLR &= ~(uint32_t)0x1;  // exit filter init mode
+
     CAN_DBGFreeze(CAN1, DISABLE);
     CAN_WakeUp(CAN1);
-    
+
     CAN_ITConfig(CAN1, CAN_IT_BOF | CAN_IT_SLK | CAN_IT_EPV | CAN_IT_ERR | CAN_IT_FMP0 | CAN_IT_FMP1 | CAN_IT_FF0 | CAN_IT_FF1 | CAN_IT_TME, ENABLE);
     if (debuggingMode)
     {
