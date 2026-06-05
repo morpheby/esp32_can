@@ -178,7 +178,7 @@ _ISR_DEF(USB_LP_CAN1_RX0_IRQHandler) {
             }
             
             xQueueSendFromISR(rx_queue, &frame, &xHigherPriorityTaskWoken);
-            if (xHigherPriorityTaskWoken != pdFALSE) { taskYIELD (); }
+            portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
         }
     }
 
@@ -223,7 +223,7 @@ _ISR_DEF(CAN1_RX1_IRQHandler) {
             }
             
             xQueueSendFromISR(rx_queue, &frame, &xHigherPriorityTaskWoken);
-            if (xHigherPriorityTaskWoken != pdFALSE) { taskYIELD (); }
+            portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
         }
     }
 
@@ -285,7 +285,7 @@ _ISR_DEF(USB_HP_CAN1_TX_IRQHandler) {
                     vTaskNotifyGiveFromISR(CAN_Tx_handler_task, &xHigherPriorityTaskWoken);
                 }
                 
-                if (xHigherPriorityTaskWoken != pdFALSE) { taskYIELD (); }
+                portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 
                 break;
             }
