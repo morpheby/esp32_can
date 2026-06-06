@@ -11,10 +11,12 @@
 #include "ch32vxxx/ch32vxxx_isr.h"
 #include "ch32v203_can_builtin.h"
 #include "ch32yyxx_can.h"
+#include "spdlog/logger.h"
 
 #if __has_include("spdlog/spdlog.h")
 #include "spdlog/spdlog.h"
-#define SPDLOG_DEBUG
+
+static std::shared_ptr<spdlog::logger> logger = nullptr;
 #endif
 
 typedef struct
@@ -354,7 +356,7 @@ void CAN_Rx_handler(void *pvParameters)
             if (lastError != CAN_ErrorCode_NoErr)
             {
                 #ifdef SPDLOG_DEBUG
-                log->warn(FMT_STRING("CAN error detected on bus: {:x}"), (int)lastError);
+                logger->warn(SPDLOG_FMT_STRING("CAN error detected on bus: {:x}"), (int)lastError);
                 #endif
             }
             if (canNeedsBusReset) {
@@ -363,41 +365,14 @@ void CAN_Rx_handler(void *pvParameters)
                 canNeedsBusReset = false;
 
                 #ifdef SPDLOG_DEBUG
-                log->warn("CAN bus will be reset");
+                logger->warn("CAN bus will be reset");
                 #endif
 
                 // Clear bus flags
                 CAN_ClearFlag(CAN1, CAN_FLAG_EWG | CAN_FLAG_EPV | CAN_FLAG_BOF | CAN_FLAG_LEC);
                 
-                CAN_InitTypeDef CAN_InitStructure = {
-                    .CAN_Prescaler = espCan->currentTimingConfig.brp,
-                    .CAN_Mode = CAN_Mode_Normal,
-                    .CAN_SJW = espCan->currentTimingConfig.sjw,
-                    .CAN_BS1 = espCan->currentTimingConfig.tseg_1,
-                    .CAN_BS2 = espCan->currentTimingConfig.tseg_2,
-                    .CAN_TTCM = DISABLE,    // Don't use TTCAN
-                    .CAN_ABOM = DISABLE,    // Manually reset bus after error
-                    .CAN_AWUM = DISABLE,    // Manually wake-up from sleep
-                    // .CAN_NART = ENABLE,     // Don't resend messages automatically
-                    .CAN_NART = DISABLE,     // Resend messages automatically
-                    .CAN_RFLM = ENABLE,     // When the receiving FIFO overflows, don't receive new messages
-                    .CAN_TXFP = ENABLE,    // Send priority is determined by the message identifier
-                };
-
-                if (CAN_Init(CAN1, &CAN_InitStructure) != CAN_InitStatus_Success) {
-                    #ifdef SPDLOG_DEBUG
-                    log->error("Failed to setup CAN");
-                    #endif
-                    return;
-                }
-                CAN_SlaveStartBank(28);
-                CAN1->FCTLR |= 0x1;
-                CAN1->FWR &= ~(uint32_t)0x1;
-                CAN1->FCTLR &= ~(uint32_t)0x1;
-                
-                CAN_DBGFreeze(CAN1, DISABLE);
-                CAN_WakeUp(CAN1);
-                espCan->readyForTraffic = true;
+                disable();
+                enable();
             }
 #if defined(CAN_RX_ON_MAIN_LOOP)
             return;
@@ -549,7 +524,7 @@ int CH32CAN::_setFilter(uint32_t id, uint32_t mask, bool extended)
     }
     
     #ifdef SPDLOG_DEBUG
-    log->debug(FMT_STRING("Filter {:x} was not set"), (int)id);
+    logger->debug(SPDLOG_FMT_STRING("Filter {:x} was not set"), (int)id);
     #endif
 
     return -1;
@@ -557,12 +532,10 @@ int CH32CAN::_setFilter(uint32_t id, uint32_t mask, bool extended)
 
 uint32_t CH32CAN::init(uint32_t ul_baudrate)
 {
-
-
     #ifdef SPDLOG_DEBUG
-    auto log = spdlog::get("CAN");
-    if(log == nullptr)
-        log = spdlog::default_logger();
+    logger = spdlog::get("CAN");
+    if(logger == nullptr)
+        logger = spdlog::default_logger();
     #endif
 
     GPIO_InitTypeDef      GPIO_InitStructure = {0};
@@ -606,7 +579,7 @@ uint32_t CH32CAN::beginAutoSpeed()
         currentTimingConfig = valid_timings[idx].cfg;
 
         #ifdef SPDLOG_DEBUG
-        log->info(FMT_STRING("Autospeed, trying {}"), (int) valid_timings[idx].speed);
+        logger->info(SPDLOG_FMT_STRING("Autospeed, trying {}"), (int) valid_timings[idx].speed);
         #endif
 
         enable();
@@ -615,7 +588,7 @@ uint32_t CH32CAN::beginAutoSpeed()
         {
             setListenOnlyMode(oldListenMode);
             #ifdef SPDLOG_DEBUG
-            log->info("Autospeed success");
+            logger->info("Autospeed success");
             #endif
             return valid_timings[idx].speed;
         }
@@ -623,14 +596,14 @@ uint32_t CH32CAN::beginAutoSpeed()
         {
             currentTimingConfig = oldMode;
             #ifdef SPDLOG_DEBUG
-            log->info("Autospeed failed");
+            logger->info("Autospeed failed");
             #endif
         }
         idx++;
     }
 
     #ifdef SPDLOG_DEBUG
-    log->info("Could not complete autospeed");
+    logger->info("Could not complete autospeed");
     #endif
 
     disable();
@@ -657,7 +630,7 @@ uint32_t CH32CAN::set_baudrate(uint32_t ul_baudrate)
     }
 
     #ifdef SPDLOG_DEBUG
-    log->error("Invalid bit timing specified");
+    logger->error("Invalid bit timing specified");
     #endif
     return 0;
 }
@@ -710,13 +683,21 @@ void CH32CAN::enable()
     
     if (CAN_Init(CAN1, &CAN_InitStructure) != CAN_InitStatus_Success) {
         #ifdef SPDLOG_DEBUG
-        log->info("Failed to setup CAN");
+        logger->info("Failed to setup CAN");
         #endif
         return;
     }
     CAN_SlaveStartBank(28);         // all 28 banks belong to CAN1
     CAN1->FCTLR |= 0x1;             // enter filter init mode
-    CAN1->FWR = 0;                  // deactivate every bank (incl. catch-all 0)
+    {
+        uint32_t filters = 0;
+        for (int i = 0; i < BI_NUM_FILTERS; ++i) {
+            if (filterIsConfigured[i]) {
+                filters |= ((uint32_t)1) << i;
+            }
+        }
+        CAN1->FWR = filters;
+    }
     CAN1->FCTLR &= ~(uint32_t)0x1;  // exit filter init mode
 
     CAN_DBGFreeze(CAN1, DISABLE);
@@ -800,7 +781,7 @@ bool CH32CAN::processFrame(CAN_FRAME &frame, uint8_t filter_id)
     }
 
     #ifdef SPDLOG_DEBUG
-    SPDLOG_LOGGER_TRACE(log, FMT_STRING("Frame processed at filter {:x}"), (int) filter_id);
+    SPDLOG_LOGGER_TRACE(logger, SPDLOG_FMT_STRING("Frame processed at filter {:x}"), (int) filter_id);
     #endif
 
     return true;
