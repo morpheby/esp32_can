@@ -368,11 +368,13 @@ void CAN_Rx_handler(void *pvParameters)
                 logger->warn("CAN bus will be reset");
                 #endif
 
-                // Clear bus flags
-                CAN_ClearFlag(CAN1, CAN_FLAG_EWG | CAN_FLAG_EPV | CAN_FLAG_BOF | CAN_FLAG_LEC);
-                
-                disable();
-                enable();
+                if (CAN_WakeUp(CAN1) == CAN_WakeUp_Ok) {
+                    espCan->readyForTraffic = true;
+                } else {
+                    #ifdef SPDLOG_DEBUG
+                    logger->error("CAN bus reset failed");
+                    #endif
+                }
             }
 #if defined(CAN_RX_ON_MAIN_LOOP)
             return;
@@ -689,16 +691,11 @@ void CH32CAN::enable()
     }
     CAN_SlaveStartBank(28);         // all 28 banks belong to CAN1
     CAN1->FCTLR |= 0x1;             // enter filter init mode
-    {
-        uint32_t filters = 0;
-        for (int i = 0; i < BI_NUM_FILTERS; ++i) {
-            if (filterIsConfigured[i]) {
-                filters |= ((uint32_t)1) << i;
-            }
-        }
-        CAN1->FWR = filters;
-    }
+    CAN1->FWR = 0;                  // reset all filters
     CAN1->FCTLR &= ~(uint32_t)0x1;  // exit filter init mode
+    for (size_t i = 0; i < BI_NUM_FILTERS; ++i) {
+        filterIsConfigured[i] = false;
+    }
 
     CAN_DBGFreeze(CAN1, DISABLE);
     CAN_WakeUp(CAN1);
