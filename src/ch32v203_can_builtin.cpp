@@ -12,6 +12,7 @@
 #include "ch32v203_can_builtin.h"
 #include "ch32yyxx_can.h"
 #include "spdlog/logger.h"
+#include "wiring_time.h"
 
 #if __has_include("spdlog/spdlog.h")
 #include "spdlog/spdlog.h"
@@ -305,9 +306,9 @@ _ISR_DEF(CAN1_SCE_IRQHandler) {
     if (CAN_GetFlagStatus(CAN1, CAN_FLAG_BOF) == SET) {
         canNeedsBusReset = true;
     }
-    if (CAN_GetFlagStatus(CAN1, CAN_FLAG_EPV) == SET) {
-        canNeedsBusReset = true;
-    }
+    // if (CAN_GetFlagStatus(CAN1, CAN_FLAG_EPV) == SET) {
+    //     canNeedsBusReset = true;
+    // }
     if (CAN_GetFlagStatus(CAN1, CAN_FLAG_SLAK) == SET) {
         canNeedsBusReset = true;
     }
@@ -360,20 +361,30 @@ void CAN_Rx_handler(void *pvParameters)
                 #endif
             }
             if (canNeedsBusReset) {
-                espCan->cyclesSinceTraffic = 0;
-                espCan->readyForTraffic = false;
-                canNeedsBusReset = false;
-
-                #ifdef SPDLOG_DEBUG
-                logger->warn("CAN bus will be reset");
-                #endif
-
-                if (CAN_WakeUp(CAN1) == CAN_WakeUp_Ok) {
-                    espCan->readyForTraffic = true;
-                } else {
+                uint32_t now = millis();
+                if (lastBusResetRequestedMs == 0) {
                     #ifdef SPDLOG_DEBUG
-                    logger->error("CAN bus reset failed");
+                    logger->warn("Queueing CAN bus reset...");
                     #endif
+
+                    lastBusResetRequestedMs = now;
+                } else if (now > lastBusResetRequestedMs + 200) {
+                    espCan->cyclesSinceTraffic = 0;
+                    espCan->readyForTraffic = false;
+                    canNeedsBusReset = false;
+                    lastBusResetRequestedMs = 0;
+
+                    #ifdef SPDLOG_DEBUG
+                    logger->warn("CAN bus will be reset");
+                    #endif
+
+                    if (CAN_WakeUp(CAN1) == CAN_WakeUp_Ok) {
+                        espCan->readyForTraffic = true;
+                    } else {
+                        #ifdef SPDLOG_DEBUG
+                        logger->error("CAN bus reset failed");
+                        #endif
+                    }
                 }
             }
 #if defined(CAN_RX_ON_MAIN_LOOP)

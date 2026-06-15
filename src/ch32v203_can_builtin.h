@@ -101,6 +101,7 @@ private:
   int txBufferSize;
   bool listenOnlyMode;
   CANTimingConfig_t currentTimingConfig;
+  uint32_t lastBusResetRequestedMs = 0;
   
   bool processFrame(CAN_FRAME &frame, uint8_t filter_id);
 };
