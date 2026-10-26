@@ -13,6 +13,8 @@
 #include "ch32yyxx_can.h"
 #include "spdlog/logger.h"
 #include "wiring_time.h"
+#include <memory>
+#include <new>
 
 #if __has_include("spdlog/spdlog.h")
 #include "spdlog/spdlog.h"
@@ -93,7 +95,20 @@ typedef struct
 
 static QueueHandle_t rx_queue;
 static QueueHandle_t tx_queue;
-static bool canNeedsBusReset = false;
+static volatile bool canNeedsBusReset = false;
+// Tick of the last frame successfully received or transmitted
+static volatile TickType_t canLastTrafficTick = 0;
+
+// Controller is considered stuck if it is error passive (or has a pending
+// mailbox) and no frame got through for this long
+#define CAN_STALL_TIMEOUT_MS        1000
+#define CAN_RECOVERY_BACKOFF_MIN_MS 1000
+#define CAN_RECOVERY_BACKOFF_MAX_MS 8000
+#define CAN_ERROR_LOG_INTERVAL_MS   1000
+
+static inline void canMarkTrafficFromISR() {
+    canLastTrafficTick = xTaskGetTickCountFromISR();
+}
 
 
 #if configSUPPORT_STATIC_ALLOCATION
@@ -154,6 +169,7 @@ _ISR_DEF(USB_LP_CAN1_RX0_IRQHandler) {
         while (CAN_MessagePending(CAN1, CAN_FIFO0)) {
             uint16_t timestamp = (CAN1->sFIFOMailBox[0].RXMDTR & CAN_RXMDT0R_TIME) >> 16;
             CAN_Receive(CAN1, CAN_FIFO0, &msg);
+            canMarkTrafficFromISR();
             if (xQueueIsQueueFullFromISR(rx_queue)) {
                 break;
             }
@@ -199,6 +215,7 @@ _ISR_DEF(CAN1_RX1_IRQHandler) {
         while (CAN_MessagePending(CAN1, CAN_FIFO1)) {
             uint16_t timestamp = (CAN1->sFIFOMailBox[1].RXMDTR & CAN_RXMDT1R_TIME) >> 16;
             CAN_Receive(CAN1, CAN_FIFO1, &msg);
+            canMarkTrafficFromISR();
             if (xQueueIsQueueFullFromISR(rx_queue)) {
                 break;
             }
@@ -244,6 +261,10 @@ _ISR_DEF(USB_HP_CAN1_TX_IRQHandler) {
     CAN_FRAME frame;
 
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+    if (CAN1->TSTATR & (CAN_TSTATR_TXOK0 | CAN_TSTATR_TXOK1 | CAN_TSTATR_TXOK2)) {
+        canMarkTrafficFromISR();
+    }
 
     if (tx_queue) {
         for (int i = 0; i < 3; ++i) {
@@ -306,9 +327,7 @@ _ISR_DEF(CAN1_SCE_IRQHandler) {
     if (CAN_GetFlagStatus(CAN1, CAN_FLAG_BOF) == SET) {
         canNeedsBusReset = true;
     }
-    // if (CAN_GetFlagStatus(CAN1, CAN_FLAG_EPV) == SET) {
-    //     canNeedsBusReset = true;
-    // }
+    // Error passive is handled by the stall detection in the RX loop
     if (CAN_GetFlagStatus(CAN1, CAN_FLAG_SLAK) == SET) {
         canNeedsBusReset = true;
     }
@@ -351,42 +370,7 @@ void CAN_Rx_handler(void *pvParameters)
 #endif
         if (xQueueReceive(rx_queue, &frame, xDelay) != pdTRUE) {
             espCan->cyclesSinceTraffic++;
-            
-            uint8_t lastError = CAN_GetLastErrorCode(CAN1);
-
-            if (lastError != CAN_ErrorCode_NoErr)
-            {
-                #ifdef SPDLOG_DEBUG
-                logger->warn(SPDLOG_FMT_STRING("CAN error detected on bus: {:x}"), (int)lastError);
-                #endif
-            }
-            if (canNeedsBusReset) {
-                uint32_t now = millis();
-                if (lastBusResetRequestedMs == 0) {
-                    #ifdef SPDLOG_DEBUG
-                    logger->warn("Queueing CAN bus reset...");
-                    #endif
-
-                    lastBusResetRequestedMs = now;
-                } else if (now > lastBusResetRequestedMs + 200) {
-                    espCan->cyclesSinceTraffic = 0;
-                    espCan->readyForTraffic = false;
-                    canNeedsBusReset = false;
-                    lastBusResetRequestedMs = 0;
-
-                    #ifdef SPDLOG_DEBUG
-                    logger->warn("CAN bus will be reset");
-                    #endif
-
-                    if (CAN_WakeUp(CAN1) == CAN_WakeUp_Ok) {
-                        espCan->readyForTraffic = true;
-                    } else {
-                        #ifdef SPDLOG_DEBUG
-                        logger->error("CAN bus reset failed");
-                        #endif
-                    }
-                }
-            }
+            espCan->checkBusHealth();
 #if defined(CAN_RX_ON_MAIN_LOOP)
             return;
 #else
@@ -661,21 +645,6 @@ void CH32CAN::setNoACKMode(bool state)
 
 void CH32CAN::enable()
 {
-    CAN_InitTypeDef CAN_InitStructure = {
-        .CAN_Prescaler = currentTimingConfig.brp,
-        .CAN_Mode = CAN_Mode_Normal,
-        .CAN_SJW = currentTimingConfig.sjw,
-        .CAN_BS1 = currentTimingConfig.tseg_1,
-        .CAN_BS2 = currentTimingConfig.tseg_2,
-        .CAN_TTCM = DISABLE,    // Don't use TTCAN
-        .CAN_ABOM = DISABLE,    // Manually reset bus after error
-        .CAN_AWUM = DISABLE,    // Manually wake-up from sleep
-        // .CAN_NART = ENABLE,     // Don't resend messages automatically
-        .CAN_NART = DISABLE,     // Resend messages automatically
-        .CAN_RFLM = ENABLE,     // When the receiving FIFO overflows, don't receive new messages
-        .CAN_TXFP = ENABLE,    // Send priority is determined by the message identifier
-    };
-
     rx_queue = xQueueCreate(rxBufferSize, sizeof(CAN_FRAME));
     tx_queue = xQueueCreate(txBufferSize, sizeof(CAN_FRAME));
     
@@ -694,7 +663,7 @@ void CH32CAN::enable()
 #endif
 #endif
     
-    if (CAN_Init(CAN1, &CAN_InitStructure) != CAN_InitStatus_Success) {
+    if (!configureController()) {
         #ifdef SPDLOG_DEBUG
         logger->info("Failed to setup CAN");
         #endif
@@ -708,6 +677,39 @@ void CH32CAN::enable()
         filterIsConfigured[i] = false;
     }
 
+    canNeedsBusReset = false;
+    canLastTrafficTick = xTaskGetTickCount();
+    lastRecoveryTick = canLastTrafficTick;
+    recoveryBackoffMs = CAN_RECOVERY_BACKOFF_MIN_MS;
+    
+    readyForTraffic = true;
+}
+
+bool CH32CAN::configureController()
+{
+    CAN_InitTypeDef CAN_InitStructure = {
+        .CAN_Prescaler = currentTimingConfig.brp,
+        .CAN_Mode = CAN_Mode_Normal,
+        .CAN_SJW = currentTimingConfig.sjw,
+        .CAN_BS1 = currentTimingConfig.tseg_1,
+        .CAN_BS2 = currentTimingConfig.tseg_2,
+        .CAN_TTCM = DISABLE,    // Don't use TTCAN
+        .CAN_ABOM = DISABLE,    // Manually reset bus after error
+        .CAN_AWUM = DISABLE,    // Manually wake-up from sleep
+        // .CAN_NART = ENABLE,     // Don't resend messages automatically
+        .CAN_NART = DISABLE,     // Resend messages automatically
+        .CAN_RFLM = ENABLE,     // When the receiving FIFO overflows, don't receive new messages
+        .CAN_TXFP = ENABLE,    // Send priority is determined by the message identifier
+    };
+
+    // CAN_Init returns failure also when leaving init mode times out (no 11
+    // recessive bits on a noisy bus); the controller is configured then and
+    // joins the bus on its own. Only a missing BRP means init never happened.
+    bool ok = CAN_Init(CAN1, &CAN_InitStructure) == CAN_InitStatus_Success;
+    if (!ok && (CAN1->BTIMR & 0x3FF) != (uint32_t)(currentTimingConfig.brp - 1)) {
+        return false;
+    }
+
     CAN_DBGFreeze(CAN1, DISABLE);
     CAN_WakeUp(CAN1);
 
@@ -716,8 +718,145 @@ void CH32CAN::enable()
     {
         CAN_ITConfig(CAN1, CAN_IT_LEC | CAN_IT_ERR | CAN_IT_FOV0 | CAN_IT_FOV1, ENABLE);
     }
-    
-    readyForTraffic = true;
+    return true;
+}
+
+void CH32CAN::checkBusHealth()
+{
+    if (!readyForTraffic) {
+        return;
+    }
+
+    // Sample traffic first: an ISR can advance it between these two reads.
+    const TickType_t lastTrafficTick = canLastTrafficTick;
+    TickType_t now = xTaskGetTickCount();
+    uint32_t errsr = CAN1->ERRSR;
+    uint8_t lastError = (errsr & CAN_ERRSR_LEC) >> 4;
+
+    if (lastError != CAN_ErrorCode_NoErr)
+    {
+        // LEC is sticky until the next successful frame; clear it so that
+        // only new errors are reported
+        CAN1->ERRSR &= ~CAN_ERRSR_LEC;
+        ++suppressedErrorCount;
+        if (now - lastErrorLogTick >= pdMS_TO_TICKS(CAN_ERROR_LOG_INTERVAL_MS)) {
+            #ifdef SPDLOG_DEBUG
+            logger->warn(SPDLOG_FMT_STRING("CAN error detected on bus: {:x} (x{}, TEC={}, REC={})"),
+                (int)lastError, suppressedErrorCount, (int)((errsr >> 16) & 0xFF), (int)((errsr >> 24) & 0xFF));
+            #endif
+            lastErrorLogTick = now;
+            suppressedErrorCount = 0;
+        }
+    }
+
+    TickType_t sinceTraffic = now - lastTrafficTick;
+    if (sinceTraffic < pdMS_TO_TICKS(CAN_STALL_TIMEOUT_MS)) {
+        recoveryBackoffMs = CAN_RECOVERY_BACKOFF_MIN_MS;
+    }
+
+    const uint32_t allEmpty = CAN_TSTATR_TME0 | CAN_TSTATR_TME1 | CAN_TSTATR_TME2;
+    bool busOff = errsr & CAN_ERRSR_BOFF;
+    bool errorPassive = errsr & CAN_ERRSR_EPVF;
+    bool txPending = (CAN1->TSTATR & allEmpty) != allEmpty;
+    bool stalled = (errorPassive || txPending) && sinceTraffic >= pdMS_TO_TICKS(CAN_STALL_TIMEOUT_MS);
+
+    if (!(canNeedsBusReset || busOff || stalled)) {
+        return;
+    }
+    if (now - lastRecoveryTick < pdMS_TO_TICKS(recoveryBackoffMs)) {
+        return;
+    }
+
+    #ifdef SPDLOG_DEBUG
+    logger->warn(SPDLOG_FMT_STRING("CAN controller stuck (ERRSR={:08x} TSTATR={:08x}, {} ms w/o traffic), resetting"),
+        errsr, CAN1->TSTATR, (unsigned)(sinceTraffic * portTICK_PERIOD_MS));
+    #endif
+
+    if (!recoverController()) {
+        #ifdef SPDLOG_DEBUG
+        logger->error("CAN controller reset failed");
+        #endif
+    }
+
+    lastRecoveryTick = xTaskGetTickCount();
+    recoveryBackoffMs = std::min<uint32_t>(recoveryBackoffMs * 2, CAN_RECOVERY_BACKOFF_MAX_MS);
+}
+
+bool CH32CAN::recoverController()
+{
+    // Full peripheral reset: an INRQ cycle or a wake-up does not reliably bring
+    // the controller out of a stuck error state. Filters live in the same
+    // peripheral, so preserve them across the reset. The backup is taken from
+    // the heap only for the duration of the reset (task stacks are too small).
+    std::unique_ptr<CAN_FilterRegister_TypeDef[]> savedBanks(
+        new (std::nothrow) CAN_FilterRegister_TypeDef[BI_NUM_FILTERS]);
+
+    NVIC_DisableIRQ(USB_HP_CAN1_TX_IRQn);
+    NVIC_DisableIRQ(USB_LP_CAN1_RX0_IRQn);
+    NVIC_DisableIRQ(CAN1_RX1_IRQn);
+    NVIC_DisableIRQ(CAN1_SCE_IRQn);
+    vTaskSuspendAll();
+
+    bool ok;
+    const bool fullReset = savedBanks != nullptr;
+    if (fullReset) {
+        uint32_t fctlr = CAN1->FCTLR;
+        uint32_t fmcfgr = CAN1->FMCFGR;
+        uint32_t fscfgr = CAN1->FSCFGR;
+        uint32_t fafifor = CAN1->FAFIFOR;
+        uint32_t fwr = CAN1->FWR;
+        for (size_t i = 0; i < BI_NUM_FILTERS; ++i) {
+            savedBanks[i].FR1 = CAN1->sFilterRegister[i].FR1;
+            savedBanks[i].FR2 = CAN1->sFilterRegister[i].FR2;
+        }
+
+        // Pending mailboxes are lost with the reset
+        CAN_DeInit(CAN1);
+        ok = configureController();
+
+        CAN1->FCTLR = fctlr | 0x1;      // enter filter init mode (keeps slave start bank)
+        CAN1->FWR = 0;
+        CAN1->FMCFGR = fmcfgr;
+        CAN1->FSCFGR = fscfgr;
+        CAN1->FAFIFOR = fafifor;
+        for (size_t i = 0; i < BI_NUM_FILTERS; ++i) {
+            CAN1->sFilterRegister[i].FR1 = savedBanks[i].FR1;
+            CAN1->sFilterRegister[i].FR2 = savedBanks[i].FR2;
+        }
+        CAN1->FWR = fwr;
+        CAN1->FCTLR &= ~(uint32_t)0x1;  // exit filter init mode
+    } else {
+        // No memory for the filter backup: fall back to re-initialising the
+        // controller without a peripheral reset, which leaves filters intact
+        for (uint8_t mb = 0; mb < 3; ++mb) {
+            CAN_CancelTransmit(CAN1, mb);
+        }
+        ok = configureController();
+    }
+
+    canNeedsBusReset = false;
+    canLastTrafficTick = xTaskGetTickCount();
+
+    xTaskResumeAll();
+    NVIC_EnableIRQ(USB_HP_CAN1_TX_IRQn);
+    NVIC_EnableIRQ(USB_LP_CAN1_RX0_IRQn);
+    NVIC_EnableIRQ(CAN1_RX1_IRQn);
+    NVIC_EnableIRQ(CAN1_SCE_IRQn);
+
+    savedBanks.reset();
+
+    #ifdef SPDLOG_DEBUG
+    if (!fullReset) {
+        logger->warn("CAN reset without peripheral reset: no memory for filter backup");
+    }
+    #endif
+
+    // Mailboxes are empty now; let the TX task jump-start the queue
+    if (CAN_Tx_handler_task != NULL) {
+        xTaskNotifyGive(CAN_Tx_handler_task);
+    }
+
+    return ok;
 }
 
 void CH32CAN::disable()
@@ -824,4 +963,3 @@ uint32_t CH32CAN::get_rx_buff(CAN_FRAME &msg)
     }
     return false; //otherwise we leave the msg variable alone and just return false
 }
-

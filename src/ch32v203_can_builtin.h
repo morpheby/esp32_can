@@ -101,9 +101,15 @@ private:
   int txBufferSize;
   bool listenOnlyMode;
   CANTimingConfig_t currentTimingConfig;
-  uint32_t lastBusResetRequestedMs = 0;
+  uint32_t lastRecoveryTick = 0;
+  uint32_t recoveryBackoffMs = 0;
+  uint32_t lastErrorLogTick = 0;
+  uint32_t suppressedErrorCount = 0;
   
   bool processFrame(CAN_FRAME &frame, uint8_t filter_id);
+  bool configureController();
+  void checkBusHealth();
+  bool recoverController();
 };
 
 #endif
