@@ -105,6 +105,7 @@ static volatile TickType_t canLastTrafficTick = 0;
 #define CAN_RECOVERY_BACKOFF_MAX_MS 8000
 #define CAN_ERROR_LOG_INTERVAL_MS   1000
 
+static void canCountRxFrameFromISR();
 static inline void canMarkTrafficFromISR() {
     canLastTrafficTick = xTaskGetTickCountFromISR();
 }
@@ -136,6 +137,35 @@ static volatile uint8_t txHandlesInUse = 0;   // bit per ring (ring 0 is always 
 static volatile uint8_t txFaultMask = 0;      // bit per ring: frames were lost
 static volatile TickType_t txMailboxLoadedTick[CAN_TX_RING_COUNT];
 static volatile uint32_t txAbortCount = 0;
+
+// Diagnostics: frames lost inside the driver (read them with a debugger or from the log)
+struct CanDriverStats {
+    volatile uint32_t rxFifoOverruns;   // hardware FIFO overflowed: a received frame was lost
+    volatile uint32_t rxQueueDrops;     // software queue full: a received frame was dropped in the ISR
+    volatile uint32_t txRingFull;       // trySendFrame() reported Busy
+    volatile uint32_t txSendFrameFails; // blocking sendFrame() could not queue the frame
+    volatile uint32_t rxQueueHighWater; // most frames seen waiting in the receive queue
+    volatile uint32_t maxLoopGapMs;     // longest time between two CH32CAN::loop() calls
+    volatile uint32_t rxFrames;         // frames taken from the hardware FIFOs
+    volatile uint32_t rxBurstMax;       // most frames received within one 16 ms window
+    volatile uint32_t lastDropQueueLen; // frames waiting when the last frame was dropped
+    volatile uint32_t lastDropLoopAge;  // ticks since CH32CAN::loop() last ran when it happened
+    volatile uint32_t lastLoopTick;
+};
+CanDriverStats canDriverStats;
+
+static void canCountRxFrameFromISR() {
+    static uint32_t windowStart = 0, inWindow = 0;
+    const uint32_t now = xTaskGetTickCountFromISR();
+    canDriverStats.rxFrames = canDriverStats.rxFrames + 1;
+    if (now - windowStart >= pdMS_TO_TICKS(16)) {
+        windowStart = now;
+        inWindow = 0;
+    }
+    if (++inWindow > canDriverStats.rxBurstMax) {
+        canDriverStats.rxBurstMax = inWindow;
+    }
+}
 
 static inline bool txMailboxEmpty(uint8_t mb) {
     return CAN1->TSTATR & (CAN_TSTATR_TME0 << mb);
@@ -198,6 +228,30 @@ static TxEntry frameToEntry(const CAN_FRAME *frame) {
     return entry;
 }
 
+// Receive queue entry: half the size of a CAN_FRAME, so twice as many frames fit
+struct RxEntry {
+    uint32_t id;
+    uint8_t data[8];
+    uint16_t timestamp;
+    uint8_t length;
+    uint8_t flags;
+    uint8_t fid;
+};
+
+static CAN_FRAME entryToFrame(const RxEntry &entry) {
+    CAN_FRAME frame;
+    frame.id = entry.id;
+    frame.extended = entry.flags & TX_FLAG_EXTENDED;
+    frame.rtr = (entry.flags & TX_FLAG_RTR) ? 1 : 0;
+    frame.timestamp = entry.timestamp;
+    frame.length = entry.length;
+    frame.fid = entry.fid;
+    if (!frame.rtr) {
+        memcpy(frame.data.bytes, entry.data, entry.length);
+    }
+    return frame;
+}
+
 #if !defined(CAN_RX_ON_MAIN_LOOP)
 #if configSUPPORT_STATIC_ALLOCATION
 static StaticTask_t CAN_Rx_task;
@@ -240,16 +294,19 @@ _ISR_DEF(USB_LP_CAN1_RX0_IRQHandler) {
             uint16_t timestamp = (CAN1->sFIFOMailBox[0].RXMDTR & CAN_RXMDT0R_TIME) >> 16;
             CAN_Receive(CAN1, CAN_FIFO0, &msg);
             canMarkTrafficFromISR();
+            canCountRxFrameFromISR();
             if (xQueueIsQueueFullFromISR(rx_queue)) {
+                canDriverStats.rxQueueDrops = canDriverStats.rxQueueDrops + 1;
+                canDriverStats.lastDropQueueLen = uxQueueMessagesWaitingFromISR(rx_queue);
+                canDriverStats.lastDropLoopAge = xTaskGetTickCountFromISR() - canDriverStats.lastLoopTick;
                 break;
             }
 
-            CAN_FRAME frame;
+            RxEntry frame;
             frame.id = (msg.IDE == CAN_Id_Extended) ? msg.ExtId : msg.StdId;
-            frame.extended = msg.IDE == CAN_Id_Extended;
             frame.timestamp = timestamp;
             frame.length = std::min(msg.DLC, (uint8_t) 8);
-            frame.rtr = msg.RTR == CAN_RTR_Remote;
+            frame.flags = ((msg.IDE == CAN_Id_Extended) ? TX_FLAG_EXTENDED : 0) | ((msg.RTR == CAN_RTR_Remote) ? TX_FLAG_RTR : 0);
             uint8_t filterGrpNum = 0;
             int filterNum = msg.FMI;
             for (filterGrpNum = 0; filterGrpNum < 28; ++filterGrpNum) {
@@ -262,8 +319,8 @@ _ISR_DEF(USB_LP_CAN1_RX0_IRQHandler) {
                 if (filterNum < 0) break;
             }
             frame.fid = filterGrpNum;
-            if (!frame.rtr) {
-                memcpy(frame.data.bytes, msg.Data, frame.length);
+            if (!(frame.flags & TX_FLAG_RTR)) {
+                memcpy(frame.data, msg.Data, frame.length);
             }
             
             xQueueSendFromISR(rx_queue, &frame, &xHigherPriorityTaskWoken);
@@ -271,6 +328,9 @@ _ISR_DEF(USB_LP_CAN1_RX0_IRQHandler) {
         }
     }
 
+    if (CAN1->RFIFO0 & CAN_RFIFO0_FOVR0) {
+        canDriverStats.rxFifoOverruns = canDriverStats.rxFifoOverruns + 1;
+    }
     CAN_ClearFlag(CAN1, CAN_FLAG_FF0 | CAN_FLAG_FOV0);
     CAN_ClearITPendingBit(CAN1,  CAN_IT_FMP0 | CAN_IT_FF0 | CAN_IT_FOV0);
 }
@@ -286,16 +346,19 @@ _ISR_DEF(CAN1_RX1_IRQHandler) {
             uint16_t timestamp = (CAN1->sFIFOMailBox[1].RXMDTR & CAN_RXMDT1R_TIME) >> 16;
             CAN_Receive(CAN1, CAN_FIFO1, &msg);
             canMarkTrafficFromISR();
+            canCountRxFrameFromISR();
             if (xQueueIsQueueFullFromISR(rx_queue)) {
+                canDriverStats.rxQueueDrops = canDriverStats.rxQueueDrops + 1;
+                canDriverStats.lastDropQueueLen = uxQueueMessagesWaitingFromISR(rx_queue);
+                canDriverStats.lastDropLoopAge = xTaskGetTickCountFromISR() - canDriverStats.lastLoopTick;
                 break;
             }
 
-            CAN_FRAME frame;
+            RxEntry frame;
             frame.id = (msg.IDE == CAN_Id_Extended) ? msg.ExtId : msg.StdId;
-            frame.extended = msg.IDE == CAN_Id_Extended;
             frame.timestamp = timestamp;
             frame.length = std::min(msg.DLC, (uint8_t) 8);
-            frame.rtr = msg.RTR == CAN_RTR_Remote;
+            frame.flags = ((msg.IDE == CAN_Id_Extended) ? TX_FLAG_EXTENDED : 0) | ((msg.RTR == CAN_RTR_Remote) ? TX_FLAG_RTR : 0);
             uint8_t filterGrpNum = 0;
             int filterNum = msg.FMI;
             for (filterGrpNum = 0; filterGrpNum < 28; ++filterGrpNum) {
@@ -308,8 +371,8 @@ _ISR_DEF(CAN1_RX1_IRQHandler) {
                 if (filterNum < 0) break;
             }
             frame.fid = filterGrpNum;
-            if (!frame.rtr) {
-                memcpy(frame.data.bytes, msg.Data, frame.length);
+            if (!(frame.flags & TX_FLAG_RTR)) {
+                memcpy(frame.data, msg.Data, frame.length);
             }
             
             xQueueSendFromISR(rx_queue, &frame, &xHigherPriorityTaskWoken);
@@ -317,6 +380,9 @@ _ISR_DEF(CAN1_RX1_IRQHandler) {
         }
     }
 
+    if (CAN1->RFIFO1 & CAN_RFIFO1_FOVR1) {
+        canDriverStats.rxFifoOverruns = canDriverStats.rxFifoOverruns + 1;
+    }
     CAN_ClearFlag(CAN1, CAN_FLAG_FF1 | CAN_FLAG_FOV1);
     CAN_ClearITPendingBit(CAN1,  CAN_IT_FMP1 | CAN_IT_FF1 | CAN_IT_FOV1);
 }
@@ -372,7 +438,19 @@ CH32CAN::CH32CAN() : CAN_COMMON(BI_NUM_FILTERS)
 #if defined(CAN_RX_ON_MAIN_LOOP)
 void CH32CAN::loop() {
     const TickType_t xDelay = 0;
-    CAN_FRAME frame;
+    RxEntry entry;
+
+    static uint32_t lastLoopMs = 0;
+    const uint32_t nowMs = millis();
+    if (lastLoopMs && nowMs - lastLoopMs > canDriverStats.maxLoopGapMs) {
+        canDriverStats.maxLoopGapMs = nowMs - lastLoopMs;
+    }
+    lastLoopMs = nowMs;
+    canDriverStats.lastLoopTick = xTaskGetTickCount();
+    const uint32_t waiting = rx_queue ? uxQueueMessagesWaiting(rx_queue) : 0;
+    if (waiting > canDriverStats.rxQueueHighWater) {
+        canDriverStats.rxQueueHighWater = waiting;
+    }
 
     auto espCan = this;
 
@@ -381,12 +459,12 @@ void CAN_Rx_handler(void *pvParameters)
 {
     CH32CAN* espCan = (CH32CAN*)pvParameters;
     const TickType_t xDelay = 200 / portTICK_PERIOD_MS;
-    CAN_FRAME frame;
+    RxEntry entry;
 
     for(;;)
     {
 #endif
-        if (xQueueReceive(rx_queue, &frame, xDelay) != pdTRUE) {
+        if (xQueueReceive(rx_queue, &entry, xDelay) != pdTRUE) {
             espCan->cyclesSinceTraffic++;
             espCan->checkBusHealth();
 #if defined(CAN_RX_ON_MAIN_LOOP)
@@ -395,8 +473,17 @@ void CAN_Rx_handler(void *pvParameters)
             continue;
 #endif
         }
-        espCan->processFrame(frame, frame.fid);
+        {
+            CAN_FRAME frame = entryToFrame(entry);
+            espCan->processFrame(frame, frame.fid);
+        }
 #if defined(CAN_RX_ON_MAIN_LOOP)
+    // Drain a burst in one go: one frame per main loop turn lets the receive
+    // queue overflow (and drop frames) while the loop is busy
+    for (int more = 1; more < CAN_RX_FRAMES_PER_LOOP && xQueueReceive(rx_queue, &entry, 0) == pdTRUE; ++more) {
+        CAN_FRAME frame = entryToFrame(entry);
+        espCan->processFrame(frame, frame.fid);
+    }
     return;
 }
 #else
@@ -451,6 +538,7 @@ CanTxStatus CH32CAN::trySendFrame(CAN_FRAME const &txFrame, CanTxHandle handle)
 
     const TxEntry entry = frameToEntry(&txFrame);
     if (xQueueSend(tx_ring[handle], &entry, 0) != pdTRUE) {
+        canDriverStats.txRingFull = canDriverStats.txRingFull + 1;
         return CanTxStatus::Busy;
     }
     txKick(handle);
@@ -747,9 +835,10 @@ void CH32CAN::setNoACKMode(bool state)
 
 void CH32CAN::enable()
 {
-    rx_queue = xQueueCreate(rxBufferSize, sizeof(CAN_FRAME));
+    rx_queue = xQueueCreate(rxBufferSize, sizeof(RxEntry));
     for (uint8_t ring = 0; ring < CAN_TX_RING_COUNT; ++ring) {
-        tx_ring[ring] = xQueueCreate(txBufferSize, sizeof(TxEntry));
+        // Ring 0 also carries flow control frames, which can not be retried by anybody
+        tx_ring[ring] = xQueueCreate(ring == CAN_TX_HANDLE_DEFAULT ? CAN_TX_DEFAULT_RING_DEPTH : txBufferSize, sizeof(TxEntry));
         txMailboxLoadedTick[ring] = xTaskGetTickCount();
     }
     txFaultMask = 0;
@@ -1049,6 +1138,7 @@ bool CH32CAN::sendFrame(CAN_FRAME const &txFrame)
     if (!readyForTraffic || !tx_ring[CAN_TX_HANDLE_DEFAULT]) return false;
     const TxEntry entry = frameToEntry(&txFrame);
     if (xQueueSend(tx_ring[CAN_TX_HANDLE_DEFAULT], &entry, pdMS_TO_TICKS(4)) != pdTRUE) {
+        canDriverStats.txSendFrameFails = canDriverStats.txSendFrameFails + 1;
         return false;
     }
     txKick(CAN_TX_HANDLE_DEFAULT);
@@ -1070,11 +1160,11 @@ uint16_t CH32CAN::available()
 
 uint32_t CH32CAN::get_rx_buff(CAN_FRAME &msg)
 {
-    CAN_FRAME frame;
+    RxEntry entry;
     //receive next CAN frame from queue
-    if(xQueueReceive(rx_queue,&frame, portMAX_DELAY) == pdTRUE)
+    if(xQueueReceive(rx_queue,&entry, portMAX_DELAY) == pdTRUE)
     {
-        msg = frame; //do a copy in the case that the receive worked
+        msg = entryToFrame(entry); //do a copy in the case that the receive worked
         return true;
     }
     return false; //otherwise we leave the msg variable alone and just return false

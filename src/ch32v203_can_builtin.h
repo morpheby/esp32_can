@@ -42,9 +42,17 @@
 
 #define BI_RX_BUFFER_SIZE	3
 #define BI_TX_BUFFER_SIZE  3
+// Frames the receive queue holds while the main loop is busy (20 B each). Every
+// frame lost here breaks an ISO-TP transfer; the loop can stall for >10 ms.
+#ifndef CAN_RX_QUEUE_BUFFER_SIZE
 #define CAN_RX_QUEUE_BUFFER_SIZE  32
+#endif
+// Frames handled per main loop turn (CAN_RX_ON_MAIN_LOOP)
+#define CAN_RX_FRAMES_PER_LOOP CAN_RX_QUEUE_BUFFER_SIZE
 // Frames buffered per transmit ring (see ch32v203_can_builtin.cpp)
 #define CAN_TX_QUEUE_BUFFER_SIZE  12
+// The default ring (flow control, plain sendFrame) is deeper
+#define CAN_TX_DEFAULT_RING_DEPTH 24
 #define CAN_TX_RING_COUNT 3
 // A frame that sits in a mailbox this long is aborted
 #define CAN_TX_MAILBOX_TIMEOUT_MS 200

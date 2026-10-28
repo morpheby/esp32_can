@@ -19,6 +19,13 @@ static twai_filter_config_t twai_filters_cfg = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 static QueueHandle_t callbackQueue;
 static QueueHandle_t rx_queue;
 
+// Frames lost between the TWAI driver and the listeners: every loss breaks an
+// ISO-TP transfer, so they are counted and reported
+static volatile uint32_t droppedRxFrames = 0;
+static volatile uint32_t twaiRxQueueFull = 0;
+static volatile uint32_t twaiRxFifoOverrun = 0;
+
+
 static TaskHandle_t CAN_WatchDog_Builtin_handler = NULL;
 static TaskHandle_t task_CAN_handler = NULL;
 static TaskHandle_t task_LowLevelRX_handler = NULL;
@@ -61,14 +68,14 @@ ESP32CAN::ESP32CAN(gpio_num_t rxPin, gpio_num_t txPin) : CAN_COMMON(32)
     cyclesSinceTraffic = 0;
     readyForTraffic = false;
     twai_general_cfg.tx_queue_len = BI_TX_BUFFER_SIZE;
-    twai_general_cfg.rx_queue_len = 6;
+    twai_general_cfg.rx_queue_len = 32;
     rxBufferSize = BI_RX_BUFFER_SIZE;
 }
 
 ESP32CAN::ESP32CAN() : CAN_COMMON(BI_NUM_FILTERS) 
 {
     twai_general_cfg.tx_queue_len = BI_TX_BUFFER_SIZE;
-    twai_general_cfg.rx_queue_len = 6;
+    twai_general_cfg.rx_queue_len = 32;
 
     rxBufferSize = BI_RX_BUFFER_SIZE;
 
@@ -120,6 +127,12 @@ void CAN_WatchDog_Builtin( void *pvParameters )
             if (twai_alerts & TWAI_ALERT_ERR_PASS) {
                 printf("Bus became error passive\n");
             }
+            if (twai_alerts & TWAI_ALERT_RX_QUEUE_FULL) {
+                twaiRxQueueFull = twaiRxQueueFull + 1;
+            }
+            if (twai_alerts & TWAI_ALERT_RX_FIFO_OVERRUN) {
+                twaiRxFifoOverrun = twaiRxFifoOverrun + 1;
+            }
             if (twai_alerts & TWAI_ALERT_BUS_OFF) {
                 xEventGroupClearBits(busState_eventGroup, EG_BUS_STATE_MASK);
                 xEventGroupSetBits(busState_eventGroup, EG_BUS_STATE_ERROR);
@@ -131,6 +144,14 @@ void CAN_WatchDog_Builtin( void *pvParameters )
             }
         } else if (result != ESP_ERR_TIMEOUT) {
             vTaskDelay(xDelay);
+        }
+
+        static uint32_t reported = 0;
+        const uint32_t lost = droppedRxFrames + twaiRxQueueFull + twaiRxFifoOverrun;
+        if (lost != reported) {
+            reported = lost;
+            printf("CAN RX frames lost: %u in the driver queue, %u TWAI FIFO overruns, %u TWAI queue full\n",
+                   (unsigned) droppedRxFrames, (unsigned) twaiRxFifoOverrun, (unsigned) twaiRxQueueFull);
         }
     }
 }
@@ -265,11 +286,11 @@ uint32_t ESP32CAN::init(uint32_t ul_baudrate)
 {
     _init();
     set_baudrate(ul_baudrate);
-    uint32_t alerts_to_enable = TWAI_ALERT_ERR_PASS | TWAI_ALERT_BUS_OFF | TWAI_ALERT_TX_IDLE | TWAI_ALERT_TX_SUCCESS | TWAI_ALERT_BUS_RECOVERED;
+    uint32_t alerts_to_enable = TWAI_ALERT_ERR_PASS | TWAI_ALERT_BUS_OFF | TWAI_ALERT_TX_IDLE | TWAI_ALERT_TX_SUCCESS | TWAI_ALERT_BUS_RECOVERED | TWAI_ALERT_RX_QUEUE_FULL | TWAI_ALERT_RX_FIFO_OVERRUN;
     if (debuggingMode)
     {
         alerts_to_enable |= TWAI_ALERT_AND_LOG | TWAI_ALERT_ERR_ACTIVE 
-                          | TWAI_ALERT_ARB_LOST | TWAI_ALERT_BUS_ERROR | TWAI_ALERT_TX_FAILED | TWAI_ALERT_RX_QUEUE_FULL;
+                          | TWAI_ALERT_ARB_LOST | TWAI_ALERT_BUS_ERROR | TWAI_ALERT_TX_FAILED;
     }
     if (twai_reconfigure_alerts(alerts_to_enable, NULL) == ESP_OK)
     {
@@ -376,7 +397,7 @@ void ESP32CAN::enable()
         xTaskCreatePinnedToCore(&CAN_WatchDog_Builtin, "CAN_WD_BI", 4096, this, 10, &CAN_WatchDog_Builtin_handler, SOC_CPU_CORES_NUM - 1);
     }
 
-    callbackQueue = xQueueCreate(16, sizeof(CAN_FRAME));
+    callbackQueue = xQueueCreate(64, sizeof(CAN_FRAME));
     rx_queue = xQueueCreate(rxBufferSize, sizeof(CAN_FRAME));
 
     xTaskCreate(&task_CAN, "CAN_RX", 8192, this, 15, &task_CAN_handler);
@@ -428,6 +449,13 @@ void ESP32CAN::disable()
     readyForTraffic = false;
 }
 
+static void queueRxFrame(QueueHandle_t queue, const CAN_FRAME *msg)
+{
+    if (xQueueSend(queue, msg, 0) != pdTRUE) {
+        droppedRxFrames = droppedRxFrames + 1;
+    }
+}
+
 //This function is too big to be running in interrupt context. Refactored so it doesn't.
 bool ESP32CAN::processFrame(twai_message_t &frame)
 {
@@ -452,7 +480,7 @@ bool ESP32CAN::processFrame(twai_message_t &frame)
             if (cbCANFrame[i])
             {
                 msg.fid = i;
-                xQueueSend(callbackQueue, &msg, 0);
+                queueRxFrame(callbackQueue, &msg);
                 return true;
             }
             
@@ -464,13 +492,13 @@ bool ESP32CAN::processFrame(twai_message_t &frame)
                     if (thisListener->isCallbackActive(i)) 
                     {
                         msg.fid = 0x80000000ul + (listenerPos << 24ul) + i;
-                        xQueueSend(callbackQueue, &msg, 0);
+                        queueRxFrame(callbackQueue, &msg);
                         return true;
                     }
                     else if (thisListener->isCallbackActive(numFilters)) //global catch-all 
                     {
                         msg.fid = 0x80000000ul + (listenerPos << 24ul) + 0xFF;
-                        xQueueSend(callbackQueue, &msg, 0);
+                        queueRxFrame(callbackQueue, &msg);
                         return true;
                     }
                 }
@@ -479,12 +507,12 @@ bool ESP32CAN::processFrame(twai_message_t &frame)
             if (cbGeneral)
             {
                 msg.fid = 0xFF;
-                xQueueSend(callbackQueue, &msg, 0);
+                queueRxFrame(callbackQueue, &msg);
                 return true;
             }
             
             //otherwise, send frame to input queue
-            xQueueSend(rx_queue, &msg, 0);
+            queueRxFrame(rx_queue, &msg);
             if (debuggingMode) Serial.write('_');
             return true;
         }
