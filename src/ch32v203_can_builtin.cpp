@@ -575,11 +575,20 @@ bool CH32CAN::takeTxFault(CanTxHandle handle)
 void CH32CAN::serviceTxTimeouts()
 {
     const TickType_t now = xTaskGetTickCount();
+    const TickType_t timeout = pdMS_TO_TICKS(CAN_TX_MAILBOX_TIMEOUT_MS);
     uint8_t aborted = 0;
+
+    // A frame that merely waits for arbitration on a busy bus is not stuck:
+    // aborting it would break a healthy transfer. Only a bus that carries no
+    // frames at all (nobody acknowledges, the node can not synchronise) makes
+    // a pending mailbox a failure; a frame that waits very long anyway is
+    // given up as well.
+    const bool busSilent = now - canLastTrafficTick >= timeout;
 
     for (uint8_t mb = 0; mb < CAN_TX_RING_COUNT; ++mb) {
         taskENTER_CRITICAL();
-        if (!txMailboxEmpty(mb) && now - txMailboxLoadedTick[mb] >= pdMS_TO_TICKS(CAN_TX_MAILBOX_TIMEOUT_MS)) {
+        const TickType_t pending = now - txMailboxLoadedTick[mb];
+        if (!txMailboxEmpty(mb) && ((busSilent && pending >= timeout) || pending >= 4 * timeout)) {
             // Auto-retransmission retries a frame nobody acknowledges forever
             // and would keep the mailbox (and the stream behind it) stuck.
             CAN1->TSTATR = txMailboxFlag(CAN_TSTATR_ABRQ0, mb);
@@ -597,8 +606,8 @@ void CH32CAN::serviceTxTimeouts()
 
     #ifdef SPDLOG_DEBUG
     if (aborted) {
-        logger->warn(SPDLOG_FMT_STRING("CAN TX mailbox timeout, aborted mailboxes {:x} (total {})"),
-            (int)aborted, (unsigned)txAbortCount);
+        // Short on purpose: the ISO-TP log sink keeps only 64 characters per entry, prefix included
+        logger->warn(SPDLOG_FMT_STRING("CAN txto{:x} E{:08x}"), (int)aborted, (unsigned)CAN1->ERRSR);
     }
     #endif
 }
@@ -933,7 +942,7 @@ void CH32CAN::checkBusHealth()
         ++suppressedErrorCount;
         if (now - lastErrorLogTick >= pdMS_TO_TICKS(CAN_ERROR_LOG_INTERVAL_MS)) {
             #ifdef SPDLOG_DEBUG
-            logger->warn(SPDLOG_FMT_STRING("CAN error detected on bus: {:x} (x{}, TEC={}, REC={})"),
+            logger->warn(SPDLOG_FMT_STRING("CAN err{:x} x{} T{} R{}"),
                 (int)lastError, suppressedErrorCount, (int)((errsr >> 16) & 0xFF), (int)((errsr >> 24) & 0xFF));
             #endif
             lastErrorLogTick = now;
@@ -960,8 +969,7 @@ void CH32CAN::checkBusHealth()
     }
 
     #ifdef SPDLOG_DEBUG
-    logger->warn(SPDLOG_FMT_STRING("CAN controller stuck (ERRSR={:08x} TSTATR={:08x}, {} ms w/o traffic), resetting"),
-        errsr, CAN1->TSTATR, (unsigned)(sinceTraffic * portTICK_PERIOD_MS));
+    logger->warn(SPDLOG_FMT_STRING("CAN stuck E{:08x} T{:08x}"), errsr, CAN1->TSTATR);
     #endif
 
     if (!recoverController()) {
