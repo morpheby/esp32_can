@@ -69,6 +69,9 @@ ESP32CAN::ESP32CAN(gpio_num_t rxPin, gpio_num_t txPin) : CAN_COMMON(32)
     readyForTraffic = false;
     twai_general_cfg.tx_queue_len = BI_TX_BUFFER_SIZE;
     twai_general_cfg.rx_queue_len = 32;
+    // The 64-byte RX FIFO holds only a few extended frames, so the ISR must not
+    // wait behind level-1 interrupts or a disabled flash cache.
+    twai_general_cfg.intr_flags = ESP_INTR_FLAG_LEVEL2 | ESP_INTR_FLAG_IRAM;
     rxBufferSize = BI_RX_BUFFER_SIZE;
 }
 
@@ -76,6 +79,9 @@ ESP32CAN::ESP32CAN() : CAN_COMMON(BI_NUM_FILTERS)
 {
     twai_general_cfg.tx_queue_len = BI_TX_BUFFER_SIZE;
     twai_general_cfg.rx_queue_len = 32;
+    // The 64-byte RX FIFO holds only a few extended frames, so the ISR must not
+    // wait behind level-1 interrupts or a disabled flash cache.
+    twai_general_cfg.intr_flags = ESP_INTR_FLAG_LEVEL2 | ESP_INTR_FLAG_IRAM;
 
     rxBufferSize = BI_RX_BUFFER_SIZE;
 
