@@ -76,6 +76,7 @@ public:
   void enable() override;
   void disable() override;
   bool sendFrame(const CAN_FRAME& txFrame) override;
+  CanTxStatus trySendFrame(const CAN_FRAME& txFrame, CanTxHandle handle) override;
   bool rx_avail() override;
   void setTXBufferSize(int newSize);
   void setRXBufferSize(int newSize);
@@ -92,6 +93,7 @@ public:
   friend void task_LowLevelRX(void *pvParameters);
 
 protected:
+  CanTxStatus transmit(const CAN_FRAME& txFrame, TickType_t waitTime);
   bool readyForTraffic;
   int cyclesSinceTraffic;
 

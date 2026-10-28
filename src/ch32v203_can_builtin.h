@@ -43,7 +43,11 @@
 #define BI_RX_BUFFER_SIZE	3
 #define BI_TX_BUFFER_SIZE  3
 #define CAN_RX_QUEUE_BUFFER_SIZE  32
-#define CAN_TX_QUEUE_BUFFER_SIZE  32
+// Frames buffered per transmit ring (see ch32v203_can_builtin.cpp)
+#define CAN_TX_QUEUE_BUFFER_SIZE  12
+#define CAN_TX_RING_COUNT 3
+// A frame that sits in a mailbox this long is aborted
+#define CAN_TX_MAILBOX_TIMEOUT_MS 200
 #define CAN_MAX_RETRANSMIT_COUNT 128
 
 typedef struct {
@@ -72,6 +76,16 @@ public:
   void enable();
   void disable();
   bool sendFrame(CAN_FRAME const &txFrame);
+
+  // Ordered transmit streams. Every handle owns one hardware mailbox fed by a
+  // strict FIFO, so its frames can neither be reordered by the mailbox
+  // scheduler nor by other traffic. Handle 0 is the default stream shared by
+  // everything else (and by streams that did not get a mailbox of their own).
+  CanTxHandle acquireTxHandle();
+  void releaseTxHandle(CanTxHandle handle);
+  CanTxStatus trySendFrame(CAN_FRAME const &txFrame, CanTxHandle handle);
+  void flushTxHandle(CanTxHandle handle);
+  bool takeTxFault(CanTxHandle handle);
   bool rx_avail();
   void setRXBufferSize(int newSize);
   void setTXBufferSize(int newSize);
@@ -85,7 +99,6 @@ public:
                     uint16_t id2, uint16_t mask2, bool rtr2, bool rtrMask2);
 
   friend void CAN_Rx_handler(void *pvParameters);
-  friend void CAN_Tx_handler(void *pvParameters);
   
   #if defined(CAN_RX_ON_MAIN_LOOP)
   void loop();
@@ -109,6 +122,7 @@ private:
   bool processFrame(CAN_FRAME &frame, uint8_t filter_id);
   bool configureController();
   void checkBusHealth();
+  void serviceTxTimeouts();
   bool recoverController();
 };
 

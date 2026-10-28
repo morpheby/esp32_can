@@ -94,7 +94,6 @@ typedef struct
 #endif
 
 static QueueHandle_t rx_queue;
-static QueueHandle_t tx_queue;
 static volatile bool canNeedsBusReset = false;
 // Tick of the last frame successfully received or transmitted
 static volatile TickType_t canLastTrafficTick = 0;
@@ -110,20 +109,102 @@ static inline void canMarkTrafficFromISR() {
     canLastTrafficTick = xTaskGetTickCountFromISR();
 }
 
+// Transmit path.
+//
+// Each of the three hardware mailboxes is fed from its own software FIFO
+// ("ring") and holds at most one frame at a time. A ring is therefore strictly
+// ordered, no matter what the hardware scheduler or the other rings do. Ring 0
+// is shared by everything that does not ask for an ordered stream; rings 1 and
+// 2 are handed out as transmit handles (see acquireTxHandle()).
+//
+// Frames are loaded into the mailbox either by the TX interrupt (the mailbox
+// became empty) or by the producer itself (the mailbox was already empty).
+// Both do it with interrupts masked around "take from the ring + fill the
+// mailbox", so frames of one ring can not overtake each other.
+struct TxEntry {
+    uint32_t id;
+    uint8_t data[8];
+    uint8_t length;
+    uint8_t flags;
+};
+static constexpr uint8_t TX_FLAG_EXTENDED = 1;
+static constexpr uint8_t TX_FLAG_RTR = 2;
+static constexpr uint32_t TX_REQUEST = 1; // TXRQ in TXMIR
 
-#if configSUPPORT_STATIC_ALLOCATION
+static QueueHandle_t tx_ring[CAN_TX_RING_COUNT];
+static volatile uint8_t txHandlesInUse = 0;   // bit per ring (ring 0 is always shared)
+static volatile uint8_t txFaultMask = 0;      // bit per ring: frames were lost
+static volatile TickType_t txMailboxLoadedTick[CAN_TX_RING_COUNT];
+static volatile uint32_t txAbortCount = 0;
+
+static inline bool txMailboxEmpty(uint8_t mb) {
+    return CAN1->TSTATR & (CAN_TSTATR_TME0 << mb);
+}
+
+// Write-one-to-clear flags live at the same offsets for all mailboxes, 8 bits apart
+static inline uint32_t txMailboxFlag(uint32_t mailbox0Flag, uint8_t mb) {
+    return mailbox0Flag << (8 * mb);
+}
+
+static void txLoadMailbox(uint8_t mb, const TxEntry &entry) {
+    auto &box = CAN1->sTxMailBox[mb];
+    uint32_t identifier = (entry.flags & TX_FLAG_EXTENDED)
+        ? ((entry.id << 3) | CAN_Id_Extended)
+        : (entry.id << 21);
+    if (entry.flags & TX_FLAG_RTR) {
+        identifier |= CAN_RTR_Remote;
+    }
+
+    box.TXMIR = identifier;
+    box.TXMDTR = (box.TXMDTR & 0xFFFFFFF0) | (entry.length & 0x0F);
+    box.TXMDLR = ((uint32_t)entry.data[3] << 24) | ((uint32_t)entry.data[2] << 16) |
+                 ((uint32_t)entry.data[1] << 8) | entry.data[0];
+    box.TXMDHR = ((uint32_t)entry.data[7] << 24) | ((uint32_t)entry.data[6] << 16) |
+                 ((uint32_t)entry.data[5] << 8) | entry.data[4];
+    txMailboxLoadedTick[mb] = xTaskGetTickCountFromISR();
+    box.TXMIR = identifier | TX_REQUEST;
+}
+
+// Fills the mailbox from its ring if it is empty. Interrupts must be masked
+// (or the caller is the TX interrupt).
+static void txFeedMailbox(uint8_t mb, bool fromIsr) {
+    TxEntry entry;
+    if (!txMailboxEmpty(mb)) {
+        return;
+    }
+    const bool received = fromIsr ? xQueueReceiveFromISR(tx_ring[mb], &entry, nullptr) == pdTRUE
+                                  : xQueueReceive(tx_ring[mb], &entry, 0) == pdTRUE;
+    if (received) {
+        txLoadMailbox(mb, entry);
+    }
+}
+
+static void txKick(uint8_t mb) {
+    taskENTER_CRITICAL();
+    if (tx_ring[mb]) {
+        txFeedMailbox(mb, false);
+    }
+    taskEXIT_CRITICAL();
+}
+
+static TxEntry frameToEntry(const CAN_FRAME *frame) {
+    TxEntry entry{};
+    entry.id = frame->id;
+    entry.length = frame->length > 8 ? 8 : frame->length;
+    entry.flags = (frame->extended ? TX_FLAG_EXTENDED : 0) | (frame->rtr ? TX_FLAG_RTR : 0);
+    if (!frame->rtr) {
+        memcpy(entry.data, frame->data.bytes, entry.length);
+    }
+    return entry;
+}
+
 #if !defined(CAN_RX_ON_MAIN_LOOP)
+#if configSUPPORT_STATIC_ALLOCATION
 static StaticTask_t CAN_Rx_task;
 static StackType_t CAN_Rx_task_stack[128];
 #endif
-static StaticTask_t CAN_Tx_task;
-static StackType_t CAN_Tx_task_stack[128];
-#endif
-
-#if !defined(CAN_RX_ON_MAIN_LOOP)
 static TaskHandle_t CAN_Rx_handler_task = NULL;
 #endif
-static TaskHandle_t CAN_Tx_handler_task = NULL;
 
 // static CanTxMsg mailboxMessages[3];
 // static uint16_t mailboxRetransmitCounter[3] = {0, 0, 0};
@@ -143,17 +224,6 @@ const VALID_TIMING valid_timings[] =
     {CAN_TIMING_CONFIG_20KBITS,    20000},
     {CAN_TIMING_CONFIG_20KBITS,        0} //this is a terminator record. When the code sees an entry with 0 speed it stops searching
 };
-
-static void frameToMsg(CanTxMsg *msg, const CAN_FRAME *frame) {
-    msg->IDE = frame->extended ? CAN_Id_Extended : CAN_Id_Standard;
-    msg->StdId = frame->id;
-    msg->ExtId = frame->id;
-    msg->DLC = frame->length;
-    msg->RTR = frame->rtr ? CAN_RTR_Remote : CAN_RTR_Data;
-    if (!frame->rtr) {
-        memcpy(msg->Data, frame->data.bytes, frame->length);
-    }
-}
 
 #if !(USE_TINYUSB)
 
@@ -252,74 +322,22 @@ _ISR_DEF(CAN1_RX1_IRQHandler) {
 }
 
 _ISR_DEF(USB_HP_CAN1_TX_IRQHandler) {
-    // CAN TX
-    // Find an empty mailbox or a mailbox with a failure
-    // CanTxMsg mailboxMessages_new[3];
-    // uint16_t mailboxRetransmitCounter_new[3] = {0, 0, 0};
-    CanTxMsg mailboxMessage;
-
-    CAN_FRAME frame;
-
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-
+    // CAN TX: a mailbox became empty (sent, aborted or failed)
     if (CAN1->TSTATR & (CAN_TSTATR_TXOK0 | CAN_TSTATR_TXOK1 | CAN_TSTATR_TXOK2)) {
         canMarkTrafficFromISR();
     }
 
-    if (tx_queue) {
-        for (int i = 0; i < 3; ++i) {
-            switch (CAN_TransmitStatus(CAN1, i)) {
-            case CAN_TxStatus_Pending:
-                // This one is full, ignore it
-                // mailboxMessages_new[j] = mailboxMessages[i];
-                // mailboxRetransmitCounter_new[j] = mailboxRetransmitCounter[i];
-                break;
-                
-            case CAN_TxStatus_Failed:
-            //     // This queue has an error. Check what error it is and either discard or retransmit
-            //     if(mailboxRetransmitCounter[i] < CAN_MAX_RETRANSMIT_COUNT) {
-            //         uint8_t mb = CAN_TxStatus_NoMailBox;
-            //         do {
-            //             mb = CAN_Transmit(CAN1, mailboxMessages + i);
-            //         } while (mb == CAN_TxStatus_NoMailBox);
-            //         mailboxMessages_new[mb] = mailboxMessages[i];
-            //         mailboxRetransmitCounter_new[mb] = mailboxRetransmitCounter[i];
-            //         Serial.printf("Retransmit: %u\n", mailboxRetransmitCounter_new[mb]);
-            //         if (mb < i) {
-            //             i = mb;
-            //         }
-            //         break;
-            //     }
-            // check why we get tons of dropped messages
-                // Serial.println("Drop CAN message");
-                // fallthrough
-            case CAN_TxStatus_Ok:
-                // This one has finished, get a new message from the queue and send it
-                if (xQueueReceiveFromISR(tx_queue, &frame, &xHigherPriorityTaskWoken) == pdTRUE) {
-                    frameToMsg(&mailboxMessage, &frame);
-                    uint8_t mb = CAN_TxStatus_NoMailBox;
-                    do {
-                        mb = CAN_Transmit(CAN1, &mailboxMessage);
-                    } while (mb == CAN_TxStatus_NoMailBox);
-                    // mailboxMessages_new[mb] = mailboxMessages[i];
-                    // if (mb < i) {
-                    //     i = mb;
-                    // }
-                } else {
-                    vTaskNotifyGiveFromISR(CAN_Tx_handler_task, &xHigherPriorityTaskWoken);
-                }
-                
-                portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
-
-                break;
-            }
+    for (uint8_t mb = 0; mb < CAN_TX_RING_COUNT; ++mb) {
+        // Acknowledge before looking at the mailbox: a completion after this
+        // point raises the interrupt again instead of being lost
+        const uint32_t completed = txMailboxFlag(CAN_TSTATR_RQCP0, mb);
+        if (CAN1->TSTATR & completed) {
+            CAN1->TSTATR = completed;
         }
-        // memcpy(mailboxMessages, mailboxMessages_new, 3 * sizeof(CanTxMsg));
-        // memcpy(mailboxRetransmitCounter, mailboxRetransmitCounter_new, 3 * sizeof(uint16_t));
+        if (tx_ring[mb]) {
+            txFeedMailbox(mb, true);
+        }
     }
-    
-    CAN_ClearFlag(CAN1, CAN_FLAG_RQCP0 | CAN_FLAG_RQCP1 | CAN_FLAG_RQCP2);
-    CAN_ClearITPendingBit(CAN1,  CAN_IT_TME);
 }
 
 _ISR_DEF(CAN1_SCE_IRQHandler) {
@@ -386,31 +404,115 @@ void CAN_Rx_handler(void *pvParameters)
 }
 #endif
 
-void CAN_Tx_handler(void *pvParameters)
+CanTxHandle CH32CAN::acquireTxHandle()
 {
-    // CH32CAN* espCan = (CH32CAN*)pvParameters;
-    CAN_FRAME frame;
-    
-    for(;;)
-    {
-        if ((CAN1->TSTATR & (CAN_TSTATR_TME0 | CAN_TSTATR_TME1 | CAN_TSTATR_TME2)) == (CAN_TSTATR_TME0 | CAN_TSTATR_TME1 | CAN_TSTATR_TME2)) {
-            if (xQueueReceive(tx_queue, &frame, portMAX_DELAY) != pdTRUE) {
-                continue;
-            }
+    CanTxHandle handle = CAN_TX_HANDLE_DEFAULT;
 
-            // Jump-start queue
-            CanTxMsg mailboxMessage;
-            frameToMsg(&mailboxMessage, &frame);
-
-            // We are 100% certain this is going to be the first mailbox,
-            // and to prevent races we want to set it before queue has started
-            // mailboxMessages[0] = mailboxMessage;
-            // mailboxRetransmitCounter[0] = 0;
-            CAN_Transmit(CAN1, &mailboxMessage);
-        } else {
-            ulTaskNotifyTake(1, pdMS_TO_TICKS(100));
+    taskENTER_CRITICAL();
+    for (uint8_t ring = 1; ring < CAN_TX_RING_COUNT; ++ring) {
+        if (!(txHandlesInUse & (1 << ring))) {
+            txHandlesInUse |= 1 << ring;
+            txFaultMask &= ~(1 << ring);
+            handle = ring;
+            break;
         }
     }
+    taskEXIT_CRITICAL();
+
+    // Out of dedicated mailboxes: share the default one. Frames of different
+    // streams are then interleaved, but every stream stays in order.
+    return handle;
+}
+
+void CH32CAN::releaseTxHandle(CanTxHandle handle)
+{
+    if (handle == CAN_TX_HANDLE_DEFAULT || handle >= CAN_TX_RING_COUNT) {
+        return;
+    }
+    flushTxHandle(handle);
+    taskENTER_CRITICAL();
+    txHandlesInUse &= ~(1 << handle);
+    txFaultMask &= ~(1 << handle);
+    taskEXIT_CRITICAL();
+}
+
+CanTxStatus CH32CAN::trySendFrame(CAN_FRAME const &txFrame, CanTxHandle handle)
+{
+    if (handle >= CAN_TX_RING_COUNT) {
+        handle = CAN_TX_HANDLE_DEFAULT;
+    }
+    if (!readyForTraffic || !tx_ring[handle]) {
+        return CanTxStatus::Failed;
+    }
+    // Never continue a stream after a frame of it was lost
+    if (txFaultMask & (1 << handle)) {
+        return CanTxStatus::Failed;
+    }
+
+    const TxEntry entry = frameToEntry(&txFrame);
+    if (xQueueSend(tx_ring[handle], &entry, 0) != pdTRUE) {
+        return CanTxStatus::Busy;
+    }
+    txKick(handle);
+    return CanTxStatus::Ok;
+}
+
+void CH32CAN::flushTxHandle(CanTxHandle handle)
+{
+    // The default ring is shared with unrelated traffic
+    if (handle == CAN_TX_HANDLE_DEFAULT || handle >= CAN_TX_RING_COUNT || !tx_ring[handle]) {
+        return;
+    }
+    taskENTER_CRITICAL();
+    xQueueReset(tx_ring[handle]);
+    if (!txMailboxEmpty(handle)) {
+        // Write only the abort bit: the other flags are write-one-to-clear
+        CAN1->TSTATR = txMailboxFlag(CAN_TSTATR_ABRQ0, handle);
+    }
+    taskEXIT_CRITICAL();
+}
+
+bool CH32CAN::takeTxFault(CanTxHandle handle)
+{
+    if (handle == CAN_TX_HANDLE_DEFAULT || handle >= CAN_TX_RING_COUNT) {
+        return false;
+    }
+    taskENTER_CRITICAL();
+    const bool faulted = txFaultMask & (1 << handle);
+    txFaultMask &= ~(1 << handle);
+    taskEXIT_CRITICAL();
+    return faulted;
+}
+
+void CH32CAN::serviceTxTimeouts()
+{
+    const TickType_t now = xTaskGetTickCount();
+    uint8_t aborted = 0;
+
+    for (uint8_t mb = 0; mb < CAN_TX_RING_COUNT; ++mb) {
+        taskENTER_CRITICAL();
+        if (!txMailboxEmpty(mb) && now - txMailboxLoadedTick[mb] >= pdMS_TO_TICKS(CAN_TX_MAILBOX_TIMEOUT_MS)) {
+            // Auto-retransmission retries a frame nobody acknowledges forever
+            // and would keep the mailbox (and the stream behind it) stuck.
+            CAN1->TSTATR = txMailboxFlag(CAN_TSTATR_ABRQ0, mb);
+            txMailboxLoadedTick[mb] = now;
+            if (mb != CAN_TX_HANDLE_DEFAULT && tx_ring[mb]) {
+                // A gap in the stream: whatever follows is stale
+                txFaultMask |= 1 << mb;
+                xQueueReset(tx_ring[mb]);
+            }
+            aborted |= 1 << mb;
+            txAbortCount = txAbortCount + 1;
+        }
+        taskEXIT_CRITICAL();
+    }
+
+    #ifdef SPDLOG_DEBUG
+    if (aborted) {
+        logger->warn(SPDLOG_FMT_STRING("CAN TX mailbox timeout, aborted mailboxes {:x} (total {})"),
+            (int)aborted, (unsigned)txAbortCount);
+    }
+    #endif
 }
 
 void CH32CAN::setRXBufferSize(int newSize)
@@ -646,19 +748,17 @@ void CH32CAN::setNoACKMode(bool state)
 void CH32CAN::enable()
 {
     rx_queue = xQueueCreate(rxBufferSize, sizeof(CAN_FRAME));
-    tx_queue = xQueueCreate(txBufferSize, sizeof(CAN_FRAME));
+    for (uint8_t ring = 0; ring < CAN_TX_RING_COUNT; ++ring) {
+        tx_ring[ring] = xQueueCreate(txBufferSize, sizeof(TxEntry));
+        txMailboxLoadedTick[ring] = xTaskGetTickCount();
+    }
+    txFaultMask = 0;
     
+#if !defined(CAN_RX_ON_MAIN_LOOP)
 #if configSUPPORT_STATIC_ALLOCATION
-    CAN_Tx_handler_task = xTaskCreateStatic(CAN_Tx_handler, "CAN_TX", sizeof(CAN_Tx_task_stack) / sizeof(StackType_t),
-        this, configMAX_PRIORITIES - 1, CAN_Tx_task_stack, &CAN_Tx_task);
-
-#if !defined(CAN_RX_ON_MAIN_LOOP)
-    CAN_Rx_handler_task = xTaskCreateStatic(CAN_Rx_handler, "CAN_RX", sizeof(CAN_Tx_task_stack) / sizeof(StackType_t),
+    CAN_Rx_handler_task = xTaskCreateStatic(CAN_Rx_handler, "CAN_RX", sizeof(CAN_Rx_task_stack) / sizeof(StackType_t),
         this, configMAX_PRIORITIES - 1, CAN_Rx_task_stack, &CAN_Rx_task);
-#endif
 #else
-    xTaskCreate(CAN_Tx_handler, "CAN_TX", 128, this, configMAX_PRIORITIES - 1, &CAN_Tx_handler_task);
-#if !defined(CAN_RX_ON_MAIN_LOOP)
     xTaskCreate(CAN_Rx_handler, "CAN_RX", 256, this, configMAX_PRIORITIES - 1, &CAN_Rx_handler_task);
 #endif
 #endif
@@ -697,9 +797,9 @@ bool CH32CAN::configureController()
         .CAN_ABOM = DISABLE,    // Manually reset bus after error
         .CAN_AWUM = DISABLE,    // Manually wake-up from sleep
         // .CAN_NART = ENABLE,     // Don't resend messages automatically
-        .CAN_NART = DISABLE,     // Resend messages automatically
+        .CAN_NART = DISABLE,     // Resend messages automatically (lost arbitration is retried by hardware); mailbox timeouts are handled in serviceTxTimeouts()
         .CAN_RFLM = ENABLE,     // When the receiving FIFO overflows, don't receive new messages
-        .CAN_TXFP = ENABLE,    // Send priority is determined by the message identifier
+        .CAN_TXFP = ENABLE,    // Mailboxes are sent in the order they were requested (not by identifier), so streams on different mailboxes share the bus fairly
     };
 
     // CAN_Init returns failure also when leaving init mode times out (no 11
@@ -727,7 +827,10 @@ void CH32CAN::checkBusHealth()
         return;
     }
 
+    serviceTxTimeouts();
+
     // Sample traffic first: an ISR can advance it between these two reads.
+
     const TickType_t lastTrafficTick = canLastTrafficTick;
     TickType_t now = xTaskGetTickCount();
     uint32_t errsr = CAN1->ERRSR;
@@ -797,6 +900,15 @@ bool CH32CAN::recoverController()
     NVIC_DisableIRQ(CAN1_SCE_IRQn);
     vTaskSuspendAll();
 
+    // Frames sitting in the mailboxes are lost with the reset. That leaves a
+    // gap in the ordered streams that used them: whatever follows is stale.
+    for (uint8_t mb = 1; mb < CAN_TX_RING_COUNT; ++mb) {
+        if (tx_ring[mb] && !txMailboxEmpty(mb)) {
+            txFaultMask |= 1 << mb;
+            xQueueReset(tx_ring[mb]);
+        }
+    }
+
     bool ok;
     const bool fullReset = savedBanks != nullptr;
     if (fullReset) {
@@ -851,9 +963,9 @@ bool CH32CAN::recoverController()
     }
     #endif
 
-    // Mailboxes are empty now; let the TX task jump-start the queue
-    if (CAN_Tx_handler_task != NULL) {
-        xTaskNotifyGive(CAN_Tx_handler_task);
+    // Mailboxes are empty now; restart the transmit rings
+    for (uint8_t ring = 0; ring < CAN_TX_RING_COUNT; ++ring) {
+        txKick(ring);
     }
 
     return ok;
@@ -865,11 +977,6 @@ void CH32CAN::disable()
 
     CAN_DeInit(CAN1);
 
-    if (CAN_Tx_handler_task != NULL)
-    {
-        vTaskDelete(CAN_Tx_handler_task);
-        CAN_Tx_handler_task = NULL;
-    }
 #if !defined(CAN_RX_ON_MAIN_LOOP)
     if (CAN_Rx_handler_task != NULL)
     {
@@ -882,9 +989,12 @@ void CH32CAN::disable()
         vQueueDelete(rx_queue);
         rx_queue = NULL;
     }
-    if (tx_queue) {
-        vQueueDelete(tx_queue);
-        tx_queue = NULL;
+    for (uint8_t ring = 0; ring < CAN_TX_RING_COUNT; ++ring) {
+        if (tx_ring[ring]) {
+            QueueHandle_t queue = tx_ring[ring];
+            tx_ring[ring] = NULL;
+            vQueueDelete(queue);
+        }
     }
 }
 
@@ -936,8 +1046,14 @@ bool CH32CAN::processFrame(CAN_FRAME &frame, uint8_t filter_id)
 
 bool CH32CAN::sendFrame(CAN_FRAME const &txFrame)
 {
-    if (!readyForTraffic) return false;
-    return xQueueSend(tx_queue, &txFrame, pdMS_TO_TICKS(4)) == pdTRUE;
+    if (!readyForTraffic || !tx_ring[CAN_TX_HANDLE_DEFAULT]) return false;
+    const TxEntry entry = frameToEntry(&txFrame);
+    if (xQueueSend(tx_ring[CAN_TX_HANDLE_DEFAULT], &entry, pdMS_TO_TICKS(4)) != pdTRUE) {
+        return false;
+    }
+    txKick(CAN_TX_HANDLE_DEFAULT);
+    return true;
+
 }
 
 bool CH32CAN::rx_avail()

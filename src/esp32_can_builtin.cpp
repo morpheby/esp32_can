@@ -508,7 +508,7 @@ bool ESP32CAN::sendFrameSync(CAN_FRAME& txFrame, TickType_t waitTimeout) {
     return true;
 }
 
-bool ESP32CAN::sendFrame(const CAN_FRAME& txFrame)
+CanTxStatus ESP32CAN::transmit(const CAN_FRAME& txFrame, TickType_t waitTime)
 {
     twai_message_t __TX_frame;
 
@@ -523,16 +523,14 @@ bool ESP32CAN::sendFrame(const CAN_FRAME& txFrame)
 
     xEventGroupClearBits(busState_eventGroup, EG_BUS_STATE_IDLE | EG_BUS_STATE_TX_OK);
 
-    //don't wait long if the queue was full. The end user code shouldn't be sending faster
-    //than the buffer can empty. Set a bigger TX buffer or delay sending if this is a problem.
-    switch (twai_transmit(&__TX_frame, pdMS_TO_TICKS(4)))
+    switch (twai_transmit(&__TX_frame, waitTime))
     {
     case ESP_OK:
         if (debuggingMode) Serial.write('<');
-        return true;
+        return CanTxStatus::Ok;
     case ESP_ERR_TIMEOUT:
         if (debuggingMode) Serial.write('T');
-        break;
+        return CanTxStatus::Busy;
     case ESP_ERR_INVALID_ARG:
     case ESP_FAIL:
     case ESP_ERR_INVALID_STATE:
@@ -540,8 +538,22 @@ bool ESP32CAN::sendFrame(const CAN_FRAME& txFrame)
         if (debuggingMode) Serial.write('!');
         break;
     }
-    
-    return false;
+
+    return CanTxStatus::Failed;
+}
+
+bool ESP32CAN::sendFrame(const CAN_FRAME& txFrame)
+{
+    //don't wait long if the queue was full. The end user code shouldn't be sending faster
+    //than the buffer can empty. Set a bigger TX buffer or delay sending if this is a problem.
+    return transmit(txFrame, pdMS_TO_TICKS(4)) == CanTxStatus::Ok;
+}
+
+CanTxStatus ESP32CAN::trySendFrame(const CAN_FRAME& txFrame, CanTxHandle)
+{
+    // The TWAI driver transmits strictly in queue order and has a single
+    // hardware buffer, so one shared stream already preserves ordering
+    return transmit(txFrame, 0);
 }
 
 bool ESP32CAN::rx_avail()
