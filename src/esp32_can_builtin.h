@@ -43,6 +43,10 @@
 
 #define BI_RX_BUFFER_SIZE	64
 #define BI_TX_BUFFER_SIZE  16
+// TWAI driver RX queue, filled by the ISR. It has to ride out stalls of the
+// CAN_LORX task (flash writes, Wi-Fi bursts): 32 frames are only ~8 ms of a
+// saturated 500 kbit/s bus.
+#define BI_TWAI_RX_QUEUE_LEN 128
 
 typedef struct
 {
