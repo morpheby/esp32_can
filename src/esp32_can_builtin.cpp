@@ -24,7 +24,14 @@ static QueueHandle_t rx_queue;
 static volatile uint32_t droppedRxFrames = 0;
 static volatile uint32_t twaiRxQueueFull = 0;
 static volatile uint32_t twaiRxFifoOverrun = 0;
+static volatile uint32_t rxFrameCount = 0;
 
+// With no other node on the bus every transmission fails (no ACK), so the
+// controller cycles error passive -> bus-off -> recovered within milliseconds.
+// Waiting between bus-off and recovery (doubling up to the max while no frame
+// is received) keeps that loop from starving the other tasks.
+#define CAN_BUS_OFF_COOLDOWN_MIN_MS 500
+#define CAN_BUS_OFF_COOLDOWN_MAX_MS 8000
 
 static TaskHandle_t CAN_WatchDog_Builtin_handler = NULL;
 static TaskHandle_t task_CAN_handler = NULL;
@@ -109,6 +116,8 @@ void CAN_WatchDog_Builtin( void *pvParameters )
     const TickType_t xDelay = 200 / portTICK_PERIOD_MS;
     esp_err_t result;
     uint32_t twai_alerts = 0;
+    uint32_t busOffCooldownMs = CAN_BUS_OFF_COOLDOWN_MIN_MS;
+    uint32_t rxCountAtLastBusOff = rxFrameCount;
 
     for(;;)
     {
@@ -143,6 +152,19 @@ void CAN_WatchDog_Builtin( void *pvParameters )
                 xEventGroupClearBits(busState_eventGroup, EG_BUS_STATE_MASK);
                 xEventGroupSetBits(busState_eventGroup, EG_BUS_STATE_ERROR);
                 espCan->cyclesSinceTraffic = 0;
+
+                // With nobody to ACK our frames the node goes error passive and
+                // bus-off again within milliseconds of each recovery. Back off
+                // so the alert/log/recovery cycle does not saturate the CPU.
+                const uint32_t rxCount = rxFrameCount;
+                if (rxCount != rxCountAtLastBusOff) {
+                    rxCountAtLastBusOff = rxCount;
+                    busOffCooldownMs = CAN_BUS_OFF_COOLDOWN_MIN_MS;
+                }
+                printf("Bus off, waiting %u ms before recovery\n", (unsigned) busOffCooldownMs);
+                vTaskDelay(pdMS_TO_TICKS(busOffCooldownMs));
+                busOffCooldownMs = busOffCooldownMs * 2 < CAN_BUS_OFF_COOLDOWN_MAX_MS ? busOffCooldownMs * 2 : CAN_BUS_OFF_COOLDOWN_MAX_MS;
+
                 if (twai_initiate_recovery() != ESP_OK)
                 {
                     printf("Could not initiate bus recovery!\n");
@@ -469,6 +491,7 @@ bool ESP32CAN::processFrame(twai_message_t &frame)
     CAN_FRAME msg;
 
     cyclesSinceTraffic = 0; //reset counter to show that we are receiving traffic
+    rxFrameCount = rxFrameCount + 1;
 
     msg.id = frame.identifier;
     msg.length = frame.data_length_code;
